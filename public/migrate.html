@@ -1,0 +1,18 @@
+<!DOCTYPE html><html lang="ro"><head><title>Migrare</title></head><body>
+<h1>Importă Reguli din Excel</h1>
+<p>Selectează fișierul `SABLON LEGATURI.xlsx` pentru a importa regulile în noua bază de date. Această acțiune va șterge toate regulile existente.</p>
+<input type="file" id="sablon_import">
+<button onclick="startMigration()">Importă Acum</button>
+<p id="status"></p>
+<script>
+async function startMigration() {
+    const fileInput = document.getElementById('sablon_import');
+    if (fileInput.files.length === 0) { alert('Selectează un fișier!'); return; }
+    const status = document.getElementById('status');
+    status.innerText = 'Se importă...';
+    const formData = new FormData();
+    formData.append('sablon_import', fileInput.files[0]);
+    const response = await fetch('/api/migrate', { method: 'POST', body: formData });
+    status.innerText = await response.text();
+}
+</script></body></html>

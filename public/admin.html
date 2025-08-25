@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF--8">
+    <title>Panou de Control - Reguli</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background-color: #f4f4f9; }
+        h1, h2 { color: #333; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; background-color: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        th, td { border: 1px solid #ccc; padding: 12px; text-align: left; }
+        th { background-color: #34495E; color: white; }
+        form { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 30px; }
+        input, button { padding: 10px; margin-top: 5px; border-radius: 4px; border: 1px solid #ccc; width: calc(100% - 22px); }
+        button { background-color: #3498db; color: white; cursor: pointer; border: none; font-weight: bold; }
+        button.delete-btn { background-color: #e74c3c; width: auto; }
+    </style>
+</head>
+<body>
+    <h1>Panou de Control - Reguli de Mapare</h1>
+
+    <h2>Reguli Existente</h2>
+    <table id="tabel-reguli">
+        <thead>
+            <tr>
+                <th>Furnizor</th>
+                <th>Criterii Descriere (separate prin virgulă)</th>
+                <th>Tip Material</th>
+                <th>Descriere Raport</th>
+                <th>Prioritate</th>
+                <th>Acțiuni</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <h2>Adaugă o Regulă Nouă</h2>
+    <form id="form-regula">
+        <label>Furnizor (sau 'ORICE')</label>
+        <input name="furnizor" required value="ORICE">
+
+        <label>Criterii (cuvinte cheie separate prin virgulă)</label>
+        <input name="criterii" required placeholder="ex: PE25, R9002, 042">
+
+        <label>Tip Material (Output)</label>
+        <input name="tip_material" required placeholder="ex: LUCIOS 0.45">
+
+        <label>Descriere Raport (Output)</label>
+        <input name="descriere_raport" required placeholder="ex: RAL 9002">
+
+        <label>Prioritate (număr, ex: 10)</label>
+        <input name="prioritate" type="number" required value="10">
+
+        <button type="submit">Adaugă Regula</button>
+    </form>
+
+    <script>
+        // Funcția principală care încarcă regulile din server și reface tabelul
+        async function incarcaReguli() {
+            try {
+                const response = await fetch('/api/reguli');
+                const reguli = await response.json();
+
+                const tbody = document.querySelector('#tabel-reguli tbody');
+                tbody.innerHTML = '';
+
+                if (reguli.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6">Nu există nicio regulă definită.</td></tr>';
+                    return;
+                }
+
+                reguli.forEach(regula => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${regula.furnizor}</td>
+                        <td>${regula.criterii}</td>
+                        <td>${regula.tip_material}</td>
+                        <td>${regula.descriere_raport}</td>
+                        <td>${regula.prioritate}</td>
+                        <td><button class="delete-btn" onclick="stergeRegula(${regula.id})">Șterge</button></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+
+            } catch (error) {
+                console.error('Eroare la încărcarea regulilor:', error);
+            }
+        }
+
+        // Funcția care șterge o regulă
+        async function stergeRegula(id) {
+            if (!confirm(`Ești sigur că vrei să ștergi regula cu ID-ul ${id}?`)) {
+                return;
+            }
+            try {
+                await fetch(`/api/reguli/${id}`, { method: 'DELETE' });
+                incarcaReguli(); // Reîncarcă tabelul după ștergere
+            } catch (error) {
+                console.error('Eroare la ștergerea regulii:', error);
+            }
+        }
+
+        // Se execută la încărcarea paginii
+        window.onload = incarcaReguli;
+
+        // Logica pentru trimiterea formularului de adăugare
+        document.getElementById('form-regula').addEventListener('submit', async function(event) {
+            event.preventDefault(); // Oprește reîncărcarea paginii
+
+            const formData = new FormData(this);
+            const data = Object.fromEntries(formData.entries());
+
+            try {
+                await fetch('/api/reguli', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                this.reset(); // Golește formularul
+                incarcaReguli(); // Reîncarcă tabelul cu noua regulă
+            } catch (error) {
+                console.error('Eroare la adăugarea regulii:', error);
+            }
+        });
+    </script>
+</body>
+</html>

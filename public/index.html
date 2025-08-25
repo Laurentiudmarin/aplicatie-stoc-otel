@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aplicație Procesare Stoc Oțel</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; background: white; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); overflow: hidden; }
+        .header { background: linear-gradient(45deg, #2C3E50, #34495E); color: white; padding: 30px; text-align: center; }
+        .main-content { padding: 30px; }
+        .step { margin-bottom: 30px; padding: 25px; border-left: 5px solid #3498db; background: #f8f9fa; border-radius: 0 10px 10px 0; }
+        .file-input-group { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; }
+        .file-input { display: none; }
+        .file-label { background: linear-gradient(45deg, #3498db, #2980b9); color: white; padding: 12px 25px; border-radius: 8px; cursor: pointer; font-weight: 500; }
+        .file-status { padding: 8px 15px; border-radius: 5px; font-weight: 500; }
+        .file-loaded { background: #d4edda; color: #155724; }
+        .file-pending { background: #fff3cd; color: #856404; }
+        .action-button, .form-button { background: linear-gradient(45deg, #e74c3c, #c0392b); color: white; border: none; padding: 15px 30px; font-size: 1.1em; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        .action-button:disabled { background: #bdc3c7; cursor: not-allowed; }
+        .suppliers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; max-height: 400px; overflow-y: auto; border: 2px solid #e9ecef; border-radius: 10px; padding: 20px; background: #f8f9fa; }
+        .results-section { display: none; margin-top: 30px; }
+        .results-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .results-table th, .results-table td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #dee2e6; }
+        .results-table th { background: linear-gradient(45deg, #34495e, #2c3e50); color: white; font-weight: 600; text-transform: uppercase; font-size: 12px; }
+        .quantity-red { color: #e74c3c; font-weight: bold; }
+        .quantity-black { color: #2C3E50; font-weight: bold; }
+        .download-button { background: linear-gradient(45deg, #27ae60, #2ecc71); color: white; border: none; padding: 15px 30px; font-size: 1.1em; border-radius: 8px; cursor: pointer; margin: 5px; }
+        .download-button:disabled { background: #bdc3c7; cursor: not-allowed; }
+        .progress-bar { width: 100%; height: 8px; background: #ecf0f1; border-radius: 4px; margin: 20px 0; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(45deg, #3498db, #2980b9); width: 0%; }
+        .status-message { padding: 15px; border-radius: 8px; margin: 15px 0; font-weight: 500; }
+        .status-success { background: #d4edda; color: #155724; }
+        .status-error { background: #f8d7da; color: #721c24; }
+        .status-info { background: #d1ecf1; color: #0c5460; }
+        .nav { padding: 15px 30px; background-color: #ecf0f1; border-bottom: 1px solid #ddd; }
+        .nav-btn { padding: 10px 20px; border: none; background-color: #95a5a6; color: white; cursor: pointer; border-radius: 5px; margin-right: 10px; font-size: 1em; }
+        .nav-btn.active { background-color: #3498db; }
+        #admin-view { display: none; }
+        #admin-view h2, #admin-view p { color: #2C3E50; margin-bottom: 15px; font-size: 1.5em; }
+        #admin-view p { font-size: 1em; font-style: italic; }
+        #admin-view table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        #admin-view th, #admin-view td { border: 1px solid #ccc; padding: 12px; text-align: left; }
+        #admin-view th { background-color: #34495E; color: white; }
+        #admin-view form { background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-top: 30px; }
+        #admin-view input { padding: 10px; margin-top: 5px; margin-bottom: 15px; border-radius: 4px; border: 1px solid #ccc; width: 100%; }
+        .admin-action-btn { padding: 5px 10px; cursor: pointer; border-radius: 4px; color: white; border: none; margin-right: 5px; }
+        .edit-btn { background-color: #f39c12; }
+        .delete-btn { background-color: #e74c3c; }
+        .form-button-group { display: flex; gap: 10px; }
+        .results-table th.sortable { cursor: pointer; user-select: none; position: relative; padding-right: 25px; }
+        .sort-arrow { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><h1>🏭 Aplicație Procesare Stoc Oțel</h1><p>Sistem complet pentru generarea raportului STOC MATERIE PRIMA</p></div>
+        <div class="nav">
+            <button id="nav-app" class="nav-btn active">Procesare Stoc</button>
+            <button id="nav-admin" class="nav-btn">Panou de Control</button>
+        </div>
+        <div class="main-content">
+            <div id="app-view">
+                <div class="step">
+                    <h2>📊 Pasul 1: Încărcați Stocul Zilnic</h2>
+                    <div class="file-input-group">
+                        <label for="stock-file" class="file-label">📈 Selectați STOC OȚEL</label>
+                        <input type="file" id="stock-file" class="file-input" accept=".xlsx,.xls">
+                        <span id="stock-status" class="file-status file-pending">Aștept fișier...</span>
+                    </div>
+                </div>
+                <div id="suppliers-step" class="step" style="display:none;">
+                    <h2>👥 Pasul 2: Selectați Furnizorii</h2>
+                    <div id="suppliers-list" class="suppliers-grid"></div>
+                    <div style="margin-top: 20px;"><button id="process-btn" class="action-button" disabled>🔄 Procesează Fișier</button></div>
+                    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+                    <div id="status-message"></div>
+                </div>
+                <div class="step">
+                    <h2>📋 Pasul 3: Rezultate</h2>
+                    <div id="results-section" class="results-section">
+                        <table class="results-table">
+                            <thead><tr><th class="sortable" data-column="tipMaterial" data-order="asc">Tip Material <span class="sort-arrow">↕️</span></th><th>Descriere</th><th class="sortable" data-column="cantitate" data-order="asc">Cantitate (tone) <span class="sort-arrow">↕️</span></th><th class="sortable" data-column="status" data-order="asc">Status <span class="sort-arrow">↕️</span></th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                        <div style="text-align:center; margin-top:20px;">
+                            <button id="download-btn" class="download-button" disabled>📥 Descarcă (Excel)</button>
+                            <button id="pdf-download-btn" class="download-button" disabled style="background: linear-gradient(45deg, #c0392b, #e74c3c);">📄 Descarcă (PDF)</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="admin-view">
+                <h2 id="admin-title">Panou de Control - Reguli de Mapare</h2>
+                <p>Lista este sortată alfabetic după Tip Material.</p>
+                <table id="tabel-reguli">
+                    <thead><tr><th>Furnizor</th><th>Criterii</th><th>Tip Material</th><th>Descriere Raport</th><th>Acțiuni</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <h2 id="form-title">Adaugă o Regulă Nouă</h2>
+                <form id="form-regula">
+                     <input type="hidden" name="id">
+                     <label>Furnizor (sau 'ORICE')</label><input name="furnizor" required value="ORICE">
+                     <label>Criterii (cuvinte cheie separate prin virgulă)</label><input name="criterii" required placeholder="ex: PE25, R9002, 042">
+                     <label>Tip Material (Output)</label><input name="tip_material" required placeholder="ex: LUCIOS 0.45">
+                     <label>Descriere Raport (Output)</label><input name="descriere_raport" required placeholder="ex: RAL 9002">
+                    <div class="form-button-group">
+                        <button type="submit" id="form-submit-btn" class="form-button" style="background: linear-gradient(45deg, #27ae60, #2ecc71); flex-grow: 1;">Adaugă Regula</button>
+                        <button type="button" id="form-cancel-btn" class="form-button" style="background: #95a5a6; display: none;">Anulează</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <script>
+        class StocAppManager {
+            constructor() { this.stockFile = null; this.resultsArray = []; this.initializeEventListeners(); this.showView('app'); }
+            initializeEventListeners() {
+                document.getElementById('nav-app').addEventListener('click', () => this.showView('app'));
+                document.getElementById('nav-admin').addEventListener('click', () => this.showView('admin'));
+                document.getElementById('stock-file').addEventListener('change', (e) => this.handleStockFile(e));
+                document.getElementById('process-btn').addEventListener('click', () => this.processFiles());
+                document.getElementById('download-btn').addEventListener('click', () => this.downloadReport());
+                document.getElementById('pdf-download-btn').addEventListener('click', () => this.downloadPdfReport()); // NOU
+                document.getElementById('form-regula').addEventListener('submit', (e) => this.salveazaRegula(e));
+                document.getElementById('form-cancel-btn').addEventListener('click', () => this.reseteazaFormular());
+                document.querySelectorAll('#app-view .results-table th.sortable').forEach(header => { header.addEventListener('click', () => this.handleSort(header)); });
+            }
+            displayResults(results) {
+                this.resultsArray = results; 
+                if (this.resultsArray.length === 0) { document.getElementById('results-section').style.display = 'none'; return; }
+                this.sortResults('tipMaterial', 'asc');
+                this.renderTableRows(); 
+                document.getElementById('results-section').style.display = 'block';
+                document.getElementById('download-btn').disabled = false;
+                document.getElementById('pdf-download-btn').disabled = false; // NOU
+            }
+            downloadPdfReport() {
+                if (!this.stockFile) { alert('Nu există un fișier de stoc selectat.'); return; }
+                const selectedSuppliers = Array.from(document.querySelectorAll('.supplier-checkbox:checked')).map(cb => cb.value);
+                if (selectedSuppliers.length === 0) { alert('Trebuie să selectezi cel puțin un furnizor.'); return; }
+                this.showStatus('Se generează raportul PDF pe server...', 'info');
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '/download-pdf';
+                form.enctype = 'multipart/form-data';
+                const stocInput = document.createElement('input');
+                stocInput.type = 'file';
+                stocInput.name = 'stoc';
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(this.stockFile);
+                stocInput.files = dataTransfer.files;
+                form.appendChild(stocInput);
+                const suppliersInput = document.createElement('input');
+                suppliersInput.type = 'hidden';
+                suppliersInput.name = 'suppliers';
+                suppliersInput.value = JSON.stringify(selectedSuppliers);
+                form.appendChild(suppliersInput);
+                document.body.appendChild(form);
+                form.submit();
+                document.body.removeChild(form);
+            }
+            
+            // ... (restul funcțiilor JS rămân neschimbate) ...
+            showView(viewName) { document.getElementById('app-view').style.display = 'none'; document.getElementById('admin-view').style.display = 'none'; document.getElementById('nav-app').classList.remove('active'); document.getElementById('nav-admin').classList.remove('active'); if (viewName === 'app') { document.getElementById('app-view').style.display = 'block'; document.getElementById('nav-app').classList.add('active'); } else if (viewName === 'admin') { document.getElementById('admin-view').style.display = 'block'; document.getElementById('nav-admin').classList.add('active'); this.incarcaReguli(); this.reseteazaFormular(); } }
+            async handleStockFile(event) { this.stockFile = event.target.files[0]; if (!this.stockFile) return; document.getElementById('stock-status').textContent = `✅ ${this.stockFile.name}`; document.getElementById('stock-status').className = 'file-status file-loaded'; this.showStatus('Se extrag furnizorii din fișier...', 'info'); const formData = new FormData(); formData.append('stoc', this.stockFile); try { const response = await fetch('/api/get-suppliers', { method: 'POST', body: formData }); if (!response.ok) throw new Error(await response.text()); const suppliers = await response.json(); this.displaySuppliers(suppliers); this.showStatus('Selectează furnizorii de mai jos.', 'success'); } catch (error) { this.showStatus(`Eroare la extragerea furnizorilor: ${error.message}`, 'error'); } }
+            displaySuppliers(suppliers) { const listDiv = document.getElementById('suppliers-list'); listDiv.innerHTML = ''; if (suppliers.length === 0) { listDiv.innerHTML = 'Niciun furnizor găsit în fișier.'; return; } listDiv.innerHTML += `<div style="margin-bottom: 10px; font-weight: bold;"><input type="checkbox" id="select-all-suppliers" checked><label for="select-all-suppliers">Selectează Tot</label></div>`; suppliers.forEach((supplier, index) => { listDiv.innerHTML += `<div><input type="checkbox" class="supplier-checkbox" id="supplier-${index}" value="${supplier}" checked><label for="supplier-${index}">${supplier}</label></div>`; }); document.getElementById('select-all-suppliers').addEventListener('change', (e) => { document.querySelectorAll('.supplier-checkbox').forEach(cb => cb.checked = e.target.checked); }); document.getElementById('suppliers-step').style.display = 'block'; document.getElementById('process-btn').disabled = false; }
+            async processFiles() { if (!this.stockFile) { this.showStatus('Selectează fișierul de stoc.', 'error'); return; } const selectedSuppliers = Array.from(document.querySelectorAll('.supplier-checkbox:checked')).map(cb => cb.value); if (selectedSuppliers.length === 0) { this.showStatus('Trebuie să selectezi cel puțin un furnizor.', 'error'); return; } this.updateProgress(10); this.showStatus('Se procesează pe server...', 'info'); const formData = new FormData(); formData.append('stoc', this.stockFile); formData.append('suppliers', JSON.stringify(selectedSuppliers)); try { const response = await fetch('/process', { method: 'POST', body: formData }); this.updateProgress(70); if (!response.ok) throw new Error(await response.text()); const results = await response.json(); this.displayResults(results); this.showStatus(`Procesare finalizată. S-au găsit ${results.length} materiale.`, 'success'); this.updateProgress(100); } catch (error) { this.showStatus(`Eroare: ${error.message}`, 'error'); this.updateProgress(0); } }
+            handleSort(header) { const column = header.dataset.column; const currentOrder = header.dataset.order; const newOrder = currentOrder === 'asc' ? 'desc' : 'asc'; document.querySelectorAll('#app-view .sort-arrow').forEach(arrow => arrow.textContent = '↕️'); header.querySelector('.sort-arrow').textContent = newOrder === 'asc' ? '↑' : '↓'; header.dataset.order = newOrder; this.sortResults(column, newOrder); this.renderTableRows(); }
+            sortResults(column, order) { const statusOrder = { 'Stoc Redus': 1, 'Stoc Suficient': 2 }; this.resultsArray.sort((a, b) => { let valA, valB; if (column === 'status') { valA = statusOrder[a.cantitate >= 10 ? 'Stoc Suficient' : 'Stoc Redus']; valB = statusOrder[b.cantitate >= 10 ? 'Stoc Suficient' : 'Stoc Redus']; } else { valA = a[column]; valB = b[column]; } let comparison = 0; if (valA > valB) { comparison = 1; } else if (valA < valB) { comparison = -1; } return order === 'desc' ? -comparison : comparison; }); }
+            renderTableRows() { const tbody = document.querySelector('#app-view .results-table tbody'); tbody.innerHTML = ''; this.resultsArray.forEach(item => { const row = document.createElement('tr'); const quantityClass = item.cantitate >= 10 ? 'quantity-black' : 'quantity-red'; const status = item.cantitate >= 10 ? 'Stoc Suficient' : 'Stoc Redus'; row.innerHTML = `<td>${item.tipMaterial}</td><td>${item.descriereRaport}</td><td class="${quantityClass}">${item.cantitate.toFixed(3)}</td><td>${status}</td>`; tbody.appendChild(row); }); }
+            downloadReport() { if (!this.stockFile) { alert('Nu există un fișier de stoc selectat.'); return; } const selectedSuppliers = Array.from(document.querySelectorAll('.supplier-checkbox:checked')).map(cb => cb.value); if (selectedSuppliers.length === 0) { alert('Trebuie să selectezi cel puțin un furnizor.'); return; } const form = document.createElement('form'); form.method = 'POST'; form.action = '/download'; form.enctype = 'multipart/form-data'; const stocInput = document.createElement('input'); stocInput.type = 'file'; stocInput.name = 'stoc'; const dataTransfer = new DataTransfer(); dataTransfer.items.add(this.stockFile); stocInput.files = dataTransfer.files; form.appendChild(stocInput); const suppliersInput = document.createElement('input'); suppliersInput.type = 'hidden'; suppliersInput.name = 'suppliers'; suppliersInput.value = JSON.stringify(selectedSuppliers); form.appendChild(suppliersInput); document.body.appendChild(form); form.submit(); document.body.removeChild(form); }
+            async incarcaReguli() { try { const response = await fetch('/api/reguli'); const reguli = await response.json(); const tbody = document.querySelector('#tabel-reguli tbody'); tbody.innerHTML = ''; if (reguli.length === 0) { tbody.innerHTML = '<tr><td colspan="5">Nu există nicio regulă definită.</td></tr>'; return; } reguli.forEach(r => { const tr = document.createElement('tr'); tr.innerHTML = `<td>${r.furnizor}</td><td>${r.criterii}</td><td>${r.tip_material}</td><td>${r.descriere_raport}</td><td><button class="admin-action-btn edit-btn" onclick='app.editeazaRegula(${JSON.stringify(r)})'>Editează</button><button class="admin-action-btn delete-btn" onclick="app.stergeRegula(${r.id})">Șterge</button></td>`; tbody.appendChild(tr); }); } catch (error) { console.error('Eroare la încărcarea regulilor:', error); } }
+            async salveazaRegula(event) { event.preventDefault(); const form = event.target; const data = Object.fromEntries(new FormData(form).entries()); const id = data.id; const url = id ? `/api/reguli/${id}` : '/api/reguli'; const method = id ? 'PUT' : 'POST'; try { await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); this.reseteazaFormular(); this.incarcaReguli(); } catch (error) { console.error('Eroare la salvarea regulii:', error); } }
+            editeazaRegula(regula) { const form = document.getElementById('form-regula'); form.elements['id'].value = regula.id; form.elements['furnizor'].value = regula.furnizor; form.elements['criterii'].value = regula.criterii; form.elements['tip_material'].value = regula.tip_material; form.elements['descriere_raport'].value = regula.descriere_raport; document.getElementById('form-title').innerText = `Editează Regula #${regula.id}`; document.getElementById('form-submit-btn').innerText = 'Salvează Modificările'; document.getElementById('form-cancel-btn').style.display = 'block'; form.scrollIntoView({ behavior: 'smooth' }); }
+            reseteazaFormular() { const form = document.getElementById('form-regula'); form.reset(); form.elements['id'].value = ''; document.getElementById('form-title').innerText = 'Adaugă o Regulă Nouă'; document.getElementById('form-submit-btn').innerText = 'Adaugă Regula'; document.getElementById('form-cancel-btn').style.display = 'none'; }
+            async stergeRegula(id) { if (!confirm(`Ești sigur că vrei să ștergi regula?`)) return; try { await fetch(`/api/reguli/${id}`, { method: 'DELETE' }); this.incarcaReguli(); } catch (error) { console.error('Eroare la ștergerea regulii:', error); } }
+            showStatus(message, type) { const statusDiv = document.getElementById('status-message'); if(!statusDiv) return; statusDiv.textContent = message; statusDiv.className = `status-message status-${type}`; statusDiv.style.display = 'block'; }
+            updateProgress(percentage) { const progressFill = document.getElementById('progress-fill'); if(!progressFill) return; progressFill.style.width = percentage + '%'; }
+        }
+        const app = new StocAppManager();
+    </script>
+</body>
+</html>
