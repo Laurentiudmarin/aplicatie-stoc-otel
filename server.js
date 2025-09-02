@@ -1,22 +1,19 @@
-// --- server.js - COD COMPLET FINAL (cu PostgreSQL, PDF, Filtre și Formatare Avansată) ---
+// --- server.js - COD COMPLET FINAL (cu Ruta de Migrare) ---
 
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const xlsx = require('xlsx');
 const fs = require('fs');
-const { Pool } = require('pg'); // Pentru PostgreSQL
+const { Pool } = require('pg');
 const ExcelJS = require('exceljs');
 const puppeteer = require('puppeteer');
 
-// Conectarea la baza de date PostgreSQL folosind adresa din Environment Variables (pentru Render)
-// Local, va trebui să ai PostgreSQL instalat și să setezi variabila DATABASE_URL
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
 });
 
-// Crearea tabelului dacă nu există
 pool.query(`
     CREATE TABLE IF NOT EXISTS reguli (
         id SERIAL PRIMARY KEY,
@@ -64,6 +61,63 @@ app.put('/api/reguli/:id', async (req, res) => {
     } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
+// --- RUTA PENTRU MIGRARE (CEA CARE LIPSEA) ---
+app.post('/api/migrate', upload.single('sablon_import'), async (req, res) => {
+    const sablonFile = req.file;
+    if (!sablonFile) {
+        return res.status(400).send('Niciun fișier selectat.');
+    }
+    const client = await pool.connect();
+    try {
+        console.log('Începem migrarea din Excel...');
+        const workbook = xlsx.readFile(sablonFile.path);
+        const sheet1 = workbook.Sheets['Sheet1'];
+        const sheet2 = workbook.Sheets['Sheet2'];
+
+        if (!sheet1 || !sheet2) {
+            throw new Error('Sheet1 sau Sheet2 lipsesc din fișierul șablon!');
+        }
+
+        const sheet1Data = xlsx.utils.sheet_to_json(sheet1, { header: 1, defval: '' });
+        const sheet2Data = xlsx.utils.sheet_to_json(sheet2, { header: 1, defval: '' });
+        const tipuriMaterial = sheet1Data[0] || [];
+
+        await client.query('BEGIN'); // Start transaction
+        await client.query('DELETE FROM reguli'); // Golește tabelul actual
+
+        const sql = `INSERT INTO reguli (furnizor, criterii, tip_material, descriere_raport) VALUES ($1, $2, $3, $4)`;
+        let count = 0;
+
+        for (let i = 1; i < sheet1Data.length; i++) {
+            for (let j = 1; j < tipuriMaterial.length; j++) {
+                const codMaterialBrut = sheet1Data[i][j];
+                const tipMaterial = tipuriMaterial[j];
+                const codCuloare = sheet2Data[i - 1] ? (sheet2Data[i - 1][j - 1] || '') : '';
+
+                if (codMaterialBrut && tipMaterial) {
+                    const codMaterialCurat = codMaterialBrut.toString().trim().replace(/-D$/, '');
+                    if (codMaterialCurat) { // Verificare suplimentară să nu fie gol
+                        await client.query(sql, ['ORICE', codMaterialCurat, tipMaterial.toString().trim(), codCuloare.toString().trim()]);
+                        count++;
+                    }
+                }
+            }
+        }
+        
+        await client.query('COMMIT'); // Finalize transaction
+        console.log(`${count} de reguli au fost importate cu succes!`);
+        res.send(`${count} de reguli au fost importate cu succes!`);
+
+    } catch (error) {
+        await client.query('ROLLBACK'); // Anulează tranzacția în caz de eroare
+        console.error('Migrarea a eșuat:', error);
+        res.status(500).send(`Migrarea a eșuat: ${error.message}`);
+    } finally {
+        client.release();
+        if (sablonFile) fs.unlinkSync(sablonFile.path);
+    }
+});
+
 // --- API PENTRU A EXTRAGE FURNIZORII ---
 app.post('/api/get-suppliers', upload.single('stoc'), (req, res) => {
     const stocFile = req.file;
@@ -98,7 +152,10 @@ async function runProcessing(stocFilePath, selectedSuppliers) {
         if (!sheetName) { throw new Error("Nu am găsit niciun sheet care să conțină '800' în nume."); }
         const sheet = workbook.Sheets[sheetName];
         const stocData = xlsx.utils.sheet_to_json(sheet);
-        const filteredStocData = stocData.filter(rand => { const supplierName = rand['Name 1'] || rand['Nume fz']; return selectedSuppliers.includes(supplierName); });
+        const filteredStocData = stocData.filter(rand => {
+            const supplierName = rand['Name 1'] || rand['Nume fz'];
+            return selectedSuppliers.includes(supplierName);
+        });
         const cantitatiFinale = {};
         for (const rand of filteredStocData) {
             const descriere = rand['Material Description'] || '';
@@ -111,7 +168,10 @@ async function runProcessing(stocFilePath, selectedSuppliers) {
                 const criterii = regula.criterii.split(',').map(c => c.trim().toLowerCase()).filter(c => c);
                 const descriereLower = descriere.toLowerCase();
                 const criteriiMatch = criterii.length > 0 && criterii.every(c => descriereLower.includes(c));
-                if (furnizorMatch && criteriiMatch) { regulaPotrivita = regula; break; }
+                if (furnizorMatch && criteriiMatch) {
+                    regulaPotrivita = regula;
+                    break;
+                }
             }
             if (regulaPotrivita) {
                 const cheieUnica = `${regulaPotrivita.tip_material}|${regulaPotrivita.descriere_raport}`;
@@ -183,8 +243,6 @@ app.listen(PORT, () => { console.log(`Serverul FINAL a pornit la http://localhos
 async function generateExcelReport(rezultateStoc) {
     const workbook = new ExcelJS.Workbook();
     const dateTabel = Object.keys(rezultateStoc).map(cheie => { const [tipMaterial, codCuloare] = cheie.split('|'); const cantitate = rezultateStoc[cheie]; return { tip: tipMaterial, cod: codCuloare, cantitate: parseFloat(cantitate.toFixed(3)), status: cantitate >= 10 ? 'Stoc Suficient' : 'Stoc Redus' }; }).filter(row => row.cantitate >= 1).sort((a, b) => a.tip.localeCompare(b.tip));
-    
-    // Sheet 1: Stoc Detaliat
     const worksheet1 = workbook.addWorksheet('Stoc Detaliat');
     worksheet1.columns = [{ header: 'Tip Material', key: 'tip', width: 30 }, { header: 'Cod Culoare / Descriere', key: 'cod', width: 35 }, { header: 'Cantitate Totală (tone)', key: 'cantitate', width: 25 }, { header: 'Status', key: 'status', width: 20 }];
     worksheet1.addRows(dateTabel);
@@ -200,8 +258,6 @@ async function generateExcelReport(rezultateStoc) {
     legendCell1.value = { richText: [{ font: { bold: true, color: { argb: 'FF000000' } }, text: '* ≥10 tone: Stoc Suficient ⚫\n' }, { font: { bold: true, color: { argb: 'FFFF0000' } }, text: '* 1-10 tone: Stoc Redus 🔴\n' }, { font: { bold: true, color: { argb: 'FFFF0000' } }, text: '* <1 tonă: Nu se afișează în acest tabel ❌' }] };
     legendCell1.alignment = { wrapText: true, vertical: 'top' };
     worksheet1.getRow(legendRowIndex1).height = 55;
-
-    // Sheet 2: Stoc Materie Prima - Uz Extern
     const worksheet2 = workbook.addWorksheet('Stoc Materie Prima - Uz Extern');
     worksheet2.columns = [{ header: 'Tip Material', key: 'tip', width: 30 }, { header: 'Cod Culoare / Descriere', key: 'cod', width: 35 }, { header: 'Status', key: 'status', width: 20 }];
     worksheet2.addRows(dateTabel);
@@ -216,11 +272,9 @@ async function generateExcelReport(rezultateStoc) {
     legendCell2.value = legendCell1.value;
     legendCell2.alignment = { wrapText: true, vertical: 'top' };
     worksheet2.getRow(legendRowIndex2).height = 55;
-
     const buffer = await workbook.xlsx.writeBuffer();
     return buffer;
 }
-
 async function generatePdfReport(rezultateStoc) {
     const dateTabel = Object.keys(rezultateStoc).map(cheie => { const [tipMaterial, codCuloare] = cheie.split('|'); const cantitate = rezultateStoc[cheie]; return { tip: tipMaterial, cod: codCuloare, status: cantitate >= 10 ? 'Stoc Suficient' : 'Stoc Redus', cantitate: cantitate }; }).filter(row => row.cantitate >= 1).sort((a, b) => a.tip.localeCompare(b.tip));
     let htmlRows = '';
