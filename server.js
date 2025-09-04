@@ -1,4 +1,4 @@
-// --- server.js - COD COMPLET FINAL (cu Import / Export Reguli și toate funcționalitățile) ---
+// --- server.js - COD COMPLET FINAL (cu noul sistem de import/export) ---
 
 const express = require('express');
 const multer = require('multer');
@@ -61,45 +61,42 @@ app.put('/api/reguli/:id', async (req, res) => {
     } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// --- RUTE PENTRU IMPORT / EXPORT REGULI ---
+// --- RUTE PENTRU IMPORT / EXPORT REGULI (MODIFICATE) ---
 app.post('/api/migrate', upload.single('sablon_import'), async (req, res) => {
     const sablonFile = req.file;
     if (!sablonFile) { return res.status(400).send('Niciun fișier selectat.'); }
     const client = await pool.connect();
     try {
-        console.log('Începem migrarea din Excel...');
+        console.log('Începem importul din noul format de șablon...');
         const workbook = xlsx.readFile(sablonFile.path);
-        const sheet1 = workbook.Sheets['Sheet1'];
-        const sheet2 = workbook.Sheets['Sheet2'];
-        if (!sheet1 || !sheet2) { throw new Error('Sheet1 sau Sheet2 lipsesc din fișierul șablon!'); }
-        const sheet1Data = xlsx.utils.sheet_to_json(sheet1, { header: 1, defval: '' });
-        const sheet2Data = xlsx.utils.sheet_to_json(sheet2, { header: 1, defval: '' });
-        const tipuriMaterial = sheet1Data[0] || [];
+        const sheetName = workbook.SheetNames[0]; // Citim primul sheet, indiferent de nume
+        const sheetData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
         await client.query('BEGIN');
         await client.query('DELETE FROM reguli');
-        const sql = `INSERT INTO reguli (furnizor, criterii, tip_material, descriere_raport) VALUES ($1, $2, $3, $4)`;
+
+        const sql = `INSERT INTO reguli (furnizor, tip_material, descriere_raport, criterii) VALUES ($1, $2, $3, $4)`;
         let count = 0;
-        for (let i = 1; i < sheet1Data.length; i++) {
-            for (let j = 0; j < tipuriMaterial.length; j++) { // Corectat indexul 'j'
-                const codMaterialBrut = sheet1Data[i][j];
-                const tipMaterial = tipuriMaterial[j];
-                const codCuloare = sheet2Data[i - 1] ? (sheet2Data[i - 1][j] || '') : '';
-                if (codMaterialBrut && tipMaterial) {
-                    const codMaterialCurat = codMaterialBrut.toString().trim().replace(/-D$/, '');
-                    if (codMaterialCurat) {
-                        await client.query(sql, ['ORICE', codMaterialCurat, tipMaterial.toString().trim(), codCuloare.toString().trim()]);
-                        count++;
-                    }
-                }
+        for (const row of sheetData) {
+            const tipMaterial = row['Tip Material'];
+            const descriereRaport = row['Cod Culoare / Descriere'];
+            const criterii = row['Material Corespondent (Criterii)'];
+            const furnizor = row['Furnizor'] || 'ORICE';
+
+            if (tipMaterial && descriereRaport && criterii) {
+                await client.query(sql, [furnizor.trim(), tipMaterial.trim(), descriereRaport.trim(), criterii.trim()]);
+                count++;
             }
         }
+        
         await client.query('COMMIT');
-        console.log(`${count} de reguli au fost importate cu succes!`);
+        console.log(`${count} de reguli au fost importate cu succes din noul format!`);
         res.send(`${count} de reguli au fost importate cu succes!`);
+
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('Migrarea a eșuat:', error);
-        res.status(500).send(`Migrarea a eșuat: ${error.message}`);
+        console.error('Importul a eșuat:', error);
+        res.status(500).send(`Importul a eșuat: ${error.message}`);
     } finally {
         client.release();
         if (sablonFile) fs.unlinkSync(sablonFile.path);
@@ -108,48 +105,36 @@ app.post('/api/migrate', upload.single('sablon_import'), async (req, res) => {
 
 app.get('/api/export-rules', async (req, res) => {
     try {
-        console.log("Se generează fișierul de export pentru reguli...");
-        const result = await pool.query('SELECT * FROM reguli');
+        console.log("Se generează fișierul de export pentru reguli în noul format...");
+        const result = await pool.query('SELECT * FROM reguli ORDER BY tip_material ASC');
         const reguli = result.rows;
-        const groupedRules = {};
-        let uniqueMaterialTypes = new Set();
-        reguli.forEach(r => {
-            if (!groupedRules[r.tip_material]) { groupedRules[r.tip_material] = []; }
-            groupedRules[r.tip_material].push(r);
-            uniqueMaterialTypes.add(r.tip_material);
-        });
-        const sortedHeaders = Array.from(uniqueMaterialTypes).sort();
-        const maxRows = Math.max(0, ...Object.values(groupedRules).map(arr => arr.length));
-        const sheet1Data = [sortedHeaders];
-        const sheet2Data = [sortedHeaders];
-        for (let i = 0; i < maxRows; i++) {
-            const row1 = [];
-            const row2 = [];
-            for (const header of sortedHeaders) {
-                const rule = groupedRules[header][i];
-                row1.push(rule ? rule.criterii : '');
-                row2.push(rule ? rule.descriere_raport : '');
-            }
-            sheet1Data.push(row1);
-            sheet2Data.push(row2);
-        }
-        const workbook = xlsx.utils.book_new();
-        const worksheet1 = xlsx.utils.aoa_to_sheet(sheet1Data);
-        const worksheet2 = xlsx.utils.aoa_to_sheet(sheet2Data);
-        xlsx.utils.book_append_sheet(workbook, worksheet1, 'Sheet1');
-        xlsx.utils.book_append_sheet(workbook, worksheet2, 'Sheet2');
-        const buffer = xlsx.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Reguli Stoc');
+
+        worksheet.columns = [
+            { header: 'Tip Material', key: 'tip_material', width: 30 },
+            { header: 'Cod Culoare / Descriere', key: 'descriere_raport', width: 35 },
+            { header: 'Material Corespondent (Criterii)', key: 'criterii', width: 50 },
+            { header: 'Furnizor', key: 'furnizor', width: 30 }
+        ];
+
+        worksheet.getRow(1).font = { bold: true };
+        worksheet.addRows(reguli);
+        
+        const buffer = await workbook.xlsx.writeBuffer();
+        
         const numeFisier = `reguli_backup_${new Date().toLocaleDateString('ro-RO').replace(/\./g, '-')}.xlsx`;
         res.setHeader('Content-Disposition', `attachment; filename="${numeFisier}"`);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.send(buffer);
         console.log("Exportul a fost generat cu succes.");
+
     } catch (error) {
         console.error("Eroare la exportul regulilor:", error);
         res.status(500).send("Eroare la exportul regulilor.");
     }
 });
-
 
 // --- API PENTRU A EXTRAGE FURNIZORII ---
 app.post('/api/get-suppliers', upload.single('stoc'), (req, res) => {
