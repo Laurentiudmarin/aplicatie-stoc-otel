@@ -1,4 +1,4 @@
-// --- server.js - COD COMPLET FINAL (cu formatare finală sheet 3) ---
+// --- server.js - COD COMPLET FINAL (cu toate finisajele) ---
 
 const express = require('express');
 const multer = require('multer');
@@ -9,8 +9,12 @@ const { Pool } = require('pg');
 const ExcelJS = require('exceljs');
 const puppeteer = require('puppeteer');
 
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+});
+
 // ... (Tot codul de la început până la funcțiile de generare Excel/PDF rămâne neschimbat) ...
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false });
 pool.query(`CREATE TABLE IF NOT EXISTS reguli (id SERIAL PRIMARY KEY, furnizor TEXT NOT NULL, criterii TEXT NOT NULL, tip_material TEXT NOT NULL, descriere_raport TEXT NOT NULL)`).then(() => console.log('Baza de date PostgreSQL și tabelul "reguli" sunt pregătite.')).catch(err => console.error('Eroare la crearea tabelului:', err));
 const app = express(); app.use(express.json()); const PORT = process.env.PORT || 3000; const upload = multer({ dest: 'uploads/' }); app.use(express.static('public'));
 app.get('/api/reguli', async (req, res) => { try { const result = await pool.query('SELECT * FROM reguli ORDER BY tip_material ASC'); res.json(result.rows); } catch (err) { res.status(500).json({ error: err.message }); } });
@@ -26,90 +30,95 @@ app.post('/download', upload.fields([{ name: 'stoc', maxCount: 1 }]), async (req
 app.post('/download-pdf', upload.fields([{ name: 'stoc', maxCount: 1 }]), async (req, res) => { const stocFile = req.files.stoc[0]; try { const selectedSuppliers = JSON.parse(req.body.suppliers); const rezultateStoc = await runProcessing(stocFile.path, selectedSuppliers); const pdfBuffer = await generatePdfReport(rezultateStoc); const numeFisier = `Stoc_materie_prima-uz_extern-${new Date().toLocaleDateString('ro-RO').replace(/\./g, '-')}.pdf`; res.setHeader('Content-Disposition', `attachment; filename="${numeFisier}"`); res.setHeader('Content-Type', 'application/pdf'); res.send(pdfBuffer); } catch (error) { console.error('Eroare la /download-pdf:', error); res.status(500).send(error.message); } finally { if (stocFile) fs.unlinkSync(stocFile.path); } });
 app.listen(PORT, () => { console.log(`Serverul FINAL a pornit la http://localhost:${PORT}`); });
 
-
 // --- FUNCȚIA DE GENERARE A RAPORTULUI EXCEL (MODIFICATĂ) ---
-
 async function generateExcelReport(rezultateStoc) {
     const workbook = new ExcelJS.Workbook();
     const dateTabel = Object.keys(rezultateStoc)
         .map(cheie => {
             const [tipMaterial, codCuloare] = cheie.split('|');
             const cantitate = rezultateStoc[cheie];
+            let formattedCod = codCuloare;
+            // Formatare specială pentru ZN
+            if (tipMaterial.trim() === 'ZN' && !isNaN(parseFloat(codCuloare))) {
+                formattedCod = parseFloat(codCuloare).toFixed(2);
+            }
             return {
                 tip: tipMaterial,
-                cod: codCuloare,
+                cod: formattedCod,
                 cantitate: parseFloat(cantitate.toFixed(3)),
                 status: cantitate >= 10 ? 'Stoc Suficient' : 'Stoc Redus'
             };
         })
         .filter(row => row.cantitate >= 1)
         .sort((a, b) => a.tip.localeCompare(b.tip));
+
+    const legendValue = { richText: [{ font: { bold: true, color: { argb: 'FF000000' } }, text: '* ≥10 tone: Stoc Suficient ⚫\n' }, { font: { bold: true, color: { argb: 'FFFF0000' } }, text: '* 1-10 tone: Stoc Redus 🔴\n' }, { font: { bold: true, color: { argb: 'FFFF0000' } }, text: '* <1 tonă: Nu se afișează în acest tabel ❌' }] };
     
-    const legendValue = {
-        richText: [
-            { font: { bold: true, color: { argb: 'FF000000' } }, text: '* ≥10 tone: Stoc Suficient ⚫\n' },
-            { font: { bold: true, color: { argb: 'FFFF0000' } }, text: '* 1-10 tone: Stoc Redus 🔴\n' },
-            { font: { bold: true, color: { argb: 'FFFF0000' } }, text: '* <1 tonă: Nu se afișează în acest tabel ❌' }
-        ]
-    };
-    
-    const redBoldFont = { name: 'Calibri', bold: true, size: 14, color: { argb: 'FFFF0000' } };
-    const blackBoldFont = { name: 'Calibri', bold: true, size: 14, color: { argb: 'FF000000' } };
+    // Corecție fonturi
+    const defaultFont = { name: 'Calibri', size: 11 };
+    const redBoldFont = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFF0000' } };
     const greenFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6E0B4' } };
     const headerFont = { name: 'Calibri', size: 14, bold: true };
     const centerAlignment = { vertical: 'middle', horizontal: 'center' };
+    const borderStyle = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
 
-    // --- Sheet 1 și 2 (rămân neschimbate) ---
-    // (codul pentru aceste sheet-uri este corect și rămâne aici)
+    // --- Sheet 1: Stoc Detaliat ---
     const worksheet1 = workbook.addWorksheet('Stoc Detaliat');
     worksheet1.columns = [{ header: 'Tip Material', key: 'tip', width: 30 }, { header: 'Cod Culoare / Descriere', key: 'cod', width: 35 }, { header: 'Cantitate Totală (tone)', key: 'cantitate', width: 25 }, { header: 'Status', key: 'status', width: 20 }];
     worksheet1.addRows(dateTabel);
     worksheet1.autoFilter = 'A1:D1';
     const headerRow1 = worksheet1.getRow(1);
     headerRow1.font = headerFont;
-    headerRow1.eachCell((cell) => { cell.fill = greenFill; cell.alignment = centerAlignment; });
-    worksheet1.eachRow((row, rowNumber) => { if (rowNumber > 1 && row.getCell('status').value === 'Stoc Redus') { row.getCell('cod').font = redBoldFont; row.getCell('cantitate').font = redBoldFont; row.getCell('status').font = redBoldFont; } });
+    headerRow1.eachCell((cell) => { cell.fill = greenFill; cell.alignment = centerAlignment; cell.border = borderStyle; });
+    worksheet1.eachRow((row, rowNumber) => {
+        if (rowNumber > 1) {
+            const statusVal = row.getCell('status').value;
+            row.eachCell(cell => {
+                cell.font = statusVal === 'Stoc Redus' ? redBoldFont : defaultFont;
+                cell.border = borderStyle;
+            });
+        }
+    });
     const legendRowIndex1 = worksheet1.lastRow.number + 2;
     worksheet1.mergeCells(`A${legendRowIndex1}:D${legendRowIndex1}`);
     const legendCell1 = worksheet1.getCell(`A${legendRowIndex1}`);
-    legendCell1.value = legendValue;
-    legendCell1.alignment = { wrapText: true, vertical: 'top' };
-    worksheet1.getRow(legendRowIndex1).height = 55;
+    legendCell1.value = legendValue; legendCell1.alignment = { wrapText: true, vertical: 'top' }; worksheet1.getRow(legendRowIndex1).height = 55;
+
+    // --- Sheet 2: Stoc Materie Prima - Uz Extern ---
     const worksheet2 = workbook.addWorksheet('Stoc Materie Prima - Uz Extern');
     worksheet2.columns = [{ header: 'Tip Material', key: 'tip', width: 30 }, { header: 'Cod Culoare / Descriere', key: 'cod', width: 35 }, { header: 'Status', key: 'status', width: 20 }];
     worksheet2.addRows(dateTabel);
     worksheet2.autoFilter = 'A1:C1';
     const headerRow2 = worksheet2.getRow(1);
     headerRow2.font = headerFont;
-    headerRow2.eachCell((cell) => { cell.fill = greenFill; cell.alignment = centerAlignment; });
-    worksheet2.eachRow((row, rowNumber) => { if (rowNumber > 1 && row.getCell('status').value === 'Stoc Redus') { row.getCell('cod').font = redBoldFont; row.getCell('status').font = redBoldFont; } });
+    headerRow2.eachCell((cell) => { cell.fill = greenFill; cell.alignment = centerAlignment; cell.border = borderStyle; });
+    worksheet2.eachRow((row, rowNumber) => {
+        if (rowNumber > 1) {
+            const statusVal = row.getCell('status').value;
+            row.eachCell(cell => {
+                cell.font = statusVal === 'Stoc Redus' ? redBoldFont : defaultFont;
+                cell.border = borderStyle;
+            });
+        }
+    });
     const legendRowIndex2 = worksheet2.lastRow.number + 2;
     worksheet2.mergeCells(`A${legendRowIndex2}:C${legendRowIndex2}`);
     const legendCell2 = worksheet2.getCell(`A${legendRowIndex2}`);
-    legendCell2.value = legendValue;
-    legendCell2.alignment = { wrapText: true, vertical: 'top' };
-    worksheet2.getRow(legendRowIndex2).height = 55;
+    legendCell2.value = legendValue; legendCell2.alignment = { wrapText: true, vertical: 'top' }; worksheet2.getRow(legendRowIndex2).height = 55;
 
-    // --- NOU: Sheet 3: Stoc - UZ Extern- simplificat (RECONSTRUIT) ---
+    // --- Sheet 3: Stoc - UZ Extern- simplificat ---
     const worksheet3 = workbook.addWorksheet('Stoc - UZ Extern- simplificat');
     const headerSimplificat = ['SUPREM', 'NEOMAT', 'MAT 0.50', 'MAT 0.45', 'MAT 0.40', 'LUCIOS 0.50', 'LUCIOS 0.45', 'LUCIOS 0.40', 'LUCIOS 0.35', 'LUCIOS 0.30', 'ZN', '> 0.50', 'IMITATIE LEMN'];
-    const dataToHeaderMap = {
-        'MAT 0.5': 'MAT 0.50', 'MAT 0.4': 'MAT 0.40', '> 0.5': '> 0.50', 'LUCIOS 0.5': 'LUCIOS 0.50', 'LUCIOS 0.4': 'LUCIOS 0.40', 'LUCIOS 0.3': 'LUCIOS 0.30'
-    };
-    worksheet3.columns = headerSimplificat.map(h => ({ header: h, key: h, width: 22 }));
+    const dataToHeaderMap = { 'MAT 0.5': 'MAT 0.50', 'MAT 0.4': 'MAT 0.40', '> 0.5': '> 0.50', 'LUCIOS 0.5': 'LUCIOS 0.50', 'LUCIOS 0.4': 'LUCIOS 0.40', 'LUCIOS 0.3': 'LUCIOS 0.30' };
+    worksheet3.columns = headerSimplificat.map(h => ({ header: h, key: h, width: 21.22 }));
     worksheet3.autoFilter = { from: 'A1', to: { row: 1, column: headerSimplificat.length } };
-    
     const headerRow3 = worksheet3.getRow(1);
-    headerRow3.font = { name: 'Calibri', size: 14, bold: true };
-    headerRow3.eachCell(cell => {
-        cell.fill = greenFill;
-        cell.alignment = centerAlignment;
-    });
+    headerRow3.font = { name: 'Calibri', size: 18, bold: true };
+    headerRow3.eachCell(cell => { cell.fill = greenFill; cell.alignment = centerAlignment; cell.border = borderStyle; });
     headerRow3.height = 30;
 
     const groupedData = {};
     headerSimplificat.forEach(h => groupedData[h] = []);
-    
     dateTabel.forEach(row => {
         const originalTip = row.tip.trim();
         const headerTip = dataToHeaderMap[originalTip] || originalTip;
@@ -118,34 +127,33 @@ async function generateExcelReport(rezultateStoc) {
         }
     });
 
+    for (const key in groupedData) {
+        groupedData[key].sort((a, b) => String(a.cod).localeCompare(String(b.cod)));
+    }
+
     const maxRows = Math.max(0, ...Object.values(groupedData).map(arr => arr.length));
-    
+    const redFont18 = { name: 'Calibri', size: 18, bold: true, color: { argb: 'FFFF0000' } };
+    const blackFont18 = { name: 'Calibri', size: 18, bold: true, color: { argb: 'FF000000' } };
+
     for (let i = 0; i < maxRows; i++) {
         const rowData = {};
         for (const header of headerSimplificat) {
             const item = groupedData[header]?.[i];
+            if (item) { rowData[header] = item.cod; }
+        }
+        const addedRow = worksheet3.addRow(rowData);
+        addedRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+            const headerName = worksheet3.getColumn(colNumber).header;
+            const item = groupedData[headerName]?.[i];
+            cell.alignment = centerAlignment;
+            cell.border = borderStyle;
             if (item) {
-                rowData[header] = item.cod;
+                cell.font = item.status === 'Stoc Redus' ? redFont18 : blackFont18;
+            } else {
+                cell.font = { name: 'Calibri', size: 18, bold: true };
             }
-        }
-        worksheet3.addRow(rowData);
+        });
     }
-    
-    worksheet3.eachRow((row, rowNumber) => {
-        if (rowNumber > 1) { // Aplicăm stiluri doar pe rândurile de date
-            row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-                cell.font = { name: 'Calibri', size: 14, bold: true };
-                cell.alignment = centerAlignment;
-
-                const headerName = worksheet3.getColumn(colNumber).header;
-                const rowIndex = rowNumber - 2; // indexul în array-ul de date (0-based)
-                const item = groupedData[headerName]?.[rowIndex];
-                if (item && item.status === 'Stoc Redus') {
-                    cell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FFFF0000' } };
-                }
-            });
-        }
-    });
 
     const legendRowIndex3 = (worksheet3.lastRow ? worksheet3.lastRow.number : 1) + 2;
     worksheet3.mergeCells(legendRowIndex3, 1, legendRowIndex3, headerSimplificat.length);
@@ -157,4 +165,5 @@ async function generateExcelReport(rezultateStoc) {
     const buffer = await workbook.xlsx.writeBuffer();
     return buffer;
 }
+
 async function generatePdfReport(rezultateStoc) { const dateTabel = Object.keys(rezultateStoc).map(cheie => { const [tipMaterial, codCuloare] = cheie.split('|'); const cantitate = rezultateStoc[cheie]; return { tip: tipMaterial, cod: codCuloare, status: cantitate >= 10 ? 'Stoc Suficient' : 'Stoc Redus', cantitate: cantitate }; }).filter(row => row.cantitate >= 1).sort((a, b) => a.tip.localeCompare(b.tip)); let htmlRows = ''; dateTabel.forEach(row => { const color = row.status === 'Stoc Redus' ? 'red' : 'black'; const fontWeight = 'bold'; htmlRows += `<tr style="color: ${color}; font-weight: ${fontWeight};"><td>${row.tip}</td><td>${row.cod}</td><td>${row.status}</td></tr>`; }); const legendaHtml = `<div class="legenda"><p><strong>* ≥10 tone: Stoc Suficient ⚫</strong></p><p style="color: red;"><strong>* 1-10 tone: Stoc Redus 🔴</strong></p><p style="color: red;"><strong>* <1 tonă: Nu se afișează în acest tabel ❌</strong></p></div>`; const dataCurenta = new Date().toLocaleDateString('ro-RO'); const htmlContent = `<html><head><style>body { font-family: Calibri, sans-serif; } table { width: 100%; border-collapse: collapse; page-break-inside: auto; } tr { page-break-inside: avoid; page-break-after: auto; } thead { display: table-header-group; } th, td { border: 1px solid #cccccc; padding: 8px; text-align: left; } th { background-color: #C6E0B4; font-size: 14px; font-weight: bold; } h1 { font-size: 20px; text-align: center; margin-bottom: 20px; } .legenda { margin-top: 30px; border-top: 1px solid #ccc; padding-top: 15px; page-break-inside: avoid; } .legenda p { margin: 2px 0; }</style></head><body><h1>Stoc Materie Prima - Uz Extern [${dataCurenta}]</h1><table><thead><tr><th>Tip Material</th><th>Cod Culoare / Descriere</th><th>Status</th></tr></thead><tbody>${htmlRows}</tbody></table>${legendaHtml}</body></html>`; const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] }); const page = await browser.newPage(); await page.setContent(htmlContent, { waitUntil: 'networkidle0' }); const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, landscape: true, margin: { top: '25px', right: '25px', bottom: '25px', left: '25px' } }); await browser.close(); return pdfBuffer; }
