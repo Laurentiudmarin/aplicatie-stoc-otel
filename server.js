@@ -339,7 +339,7 @@ async function generateExcelReport(rezultateStoc) {
     const legendCell2 = worksheet2.getCell(`A${legendRowIndex2}`);
     legendCell2.value = legendValue; legendCell2.alignment = { wrapText: true, vertical: 'top' }; worksheet2.getRow(legendRowIndex2).height = 55;
 
-    // --- Sheet 3: Stoc - UZ Extern- simplificat ---
+    // --- Sheet 3: Stoc - UZ Extern- simplificat (RECONSTRUIT CORECT) ---
     const worksheet3 = workbook.addWorksheet('Stoc - UZ Extern- simplificat');
     const headerSimplificat = ['SUPREM', 'NEOMAT', 'MAT 0.50', 'MAT 0.45', 'MAT 0.40', 'LUCIOS 0.50', 'LUCIOS 0.45', 'LUCIOS 0.40', 'LUCIOS 0.35', 'LUCIOS 0.30', 'ZN', '> 0.50', 'IMITATIE LEMN'];
     const dataToHeaderMap = { 'MAT 0.5': 'MAT 0.50', 'MAT 0.4': 'MAT 0.40', '> 0.5': '> 0.50', 'LUCIOS 0.5': 'LUCIOS 0.50', 'LUCIOS 0.4': 'LUCIOS 0.40', 'LUCIOS 0.3': 'LUCIOS 0.30' };
@@ -356,6 +356,7 @@ async function generateExcelReport(rezultateStoc) {
     const headerRow3 = worksheet3.getRow(1);
     headerRow3.font = { name: 'Calibri', size: 18, bold: true };
     headerRow3.eachCell(cell => { cell.fill = greenFill; cell.alignment = centerAlignment; cell.border = borderStyle; });
+    headerRow3.height = 30;
 
     const groupedData = {};
     headerSimplificat.forEach(h => groupedData[h] = []);
@@ -368,6 +369,7 @@ async function generateExcelReport(rezultateStoc) {
         }
     });
 
+    // Sortăm listele de culori A-Z în interiorul fiecărui grup
     for (const key in groupedData) {
         groupedData[key].sort((a, b) => String(a.cod).localeCompare(String(b.cod)));
     }
@@ -376,6 +378,7 @@ async function generateExcelReport(rezultateStoc) {
     const redFont18 = { name: 'Calibri', size: 18, bold: true, color: { argb: 'FFFF0000' } };
     const blackFont18 = { name: 'Calibri', size: 18, bold: true, color: { argb: 'FF000000' } };
     
+    // Creăm rânduri "dense" pentru a avea borduri complete
     for (let i = 0; i < maxRows; i++) {
         const rowData = {};
         for (const header of headerSimplificat) {
@@ -392,6 +395,7 @@ async function generateExcelReport(rezultateStoc) {
         }
         const addedRow = worksheet3.addRow(rowData);
         
+        // Aplicăm stilurile pe TOATE celulele din rând (inclusiv cele goale)
         addedRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
             const headerName = worksheet3.getColumn(colNumber).header;
             const item = groupedData[headerName]?.[i];
@@ -402,12 +406,13 @@ async function generateExcelReport(rezultateStoc) {
             if (item) {
                 cell.font = item.status === 'Stoc Redus' ? redFont18 : blackFont18;
             } else {
-                cell.font = blackFont18;
-                cell.value = '';
+                cell.font = blackFont18; // Aplicăm stilul de bază și celulelor goale
+                cell.value = ''; // Asigură-te că sunt goale, nu null
             }
         });
     }
 
+    // Adăugăm legenda la final
     const legendRowIndex3 = (worksheet3.lastRow ? worksheet3.lastRow.number : 1) + 2;
     worksheet3.mergeCells(legendRowIndex3, 1, legendRowIndex3, headerSimplificat.length);
     const legendCell3 = worksheet3.getCell(legendRowIndex3, 1);
@@ -418,19 +423,4 @@ async function generateExcelReport(rezultateStoc) {
     const buffer = await workbook.xlsx.writeBuffer();
     return buffer;
 }
-async function generatePdfReport(rezultateStoc) {
-    const dateTabel = Object.keys(rezultateStoc).map(cheie => { const [tipMaterial, codCuloare] = cheie.split('|'); const cantitate = rezultateStoc[cheie]; return { tip: tipMaterial, cod: codCuloare, status: cantitate >= 10 ? 'Stoc Suficient' : 'Stoc Redus', cantitate: cantitate }; }).filter(row => row.cantitate >= 1).sort((a, b) => a.tip.localeCompare(b.tip));
-    let htmlRows = '';
-    dateTabel.forEach(row => { const color = row.status === 'Stoc Redus' ? 'red' : 'black'; const fontWeight = 'bold'; htmlRows += `<tr style="color: ${color}; font-weight: ${fontWeight};"><td>${row.tip}</td><td>${row.cod}</td><td>${row.status}</td></tr>`; });
-    const legendaHtml = `<div class="legenda"><p><strong>* ≥10 tone: Stoc Suficient ⚫</strong></p><p style="color: red;"><strong>* 1-10 tone: Stoc Redus 🔴</strong></p><p style="color: red;"><strong>* <1 tonă: Nu se afișează în acest tabel ❌</strong></p></div>`;
-    const dataCurenta = new Date().toLocaleDateString('ro-RO');
-    const htmlContent = `<html><head><style>body { font-family: Calibri, sans-serif; } table { width: 100%; border-collapse: collapse; page-break-inside: auto; } tr { page-break-inside: avoid; page-break-after: auto; } thead { display: table-header-group; } th, td { border: 1px solid #cccccc; padding: 8px; text-align: left; } th { background-color: #C6E0B4; font-size: 14px; font-weight: bold; } h1 { font-size: 20px; text-align: center; margin-bottom: 20px; } .legenda { margin-top: 30px; border-top: 1px solid #ccc; padding-top: 15px; page-break-inside: avoid; } .legenda p { margin: 2px 0; }</style></head><body><h1>Stoc Materie Prima - Uz Extern [${dataCurenta}]</h1><table><thead><tr><th>Tip Material</th><th>Cod Culoare / Descriere</th><th>Status</th></tr></thead><tbody>${htmlRows}</tbody></table>${legendaHtml}</body></html>`;
-    const browser = await puppeteer.launch({
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    const page = await browser.newPage();
-    await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
-    const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, landscape: true, margin: { top: '25px', right: '25px', bottom: '25px', left: '25px' } });
-    await browser.close();
-    return pdfBuffer;
-}
+async function generatePdfReport(rezultateStoc) { const dateTabel = Object.keys(rezultateStoc).map(cheie => { const [tipMaterial, codCuloare] = cheie.split('|'); const cantitate = rezultateStoc[cheie]; return { tip: tipMaterial, cod: codCuloare, status: cantitate >= 10 ? 'Stoc Suficient' : 'Stoc Redus', cantitate: cantitate }; }).filter(row => row.cantitate >= 1).sort((a, b) => a.tip.localeCompare(b.tip)); let htmlRows = ''; dateTabel.forEach(row => { const color = row.status === 'Stoc Redus' ? 'red' : 'black'; const fontWeight = 'bold'; htmlRows += `<tr style="color: ${color}; font-weight: ${fontWeight};"><td>${row.tip}</td><td>${row.cod}</td><td>${row.status}</td></tr>`; }); const legendaHtml = `<div class="legenda"><p><strong>* ≥10 tone: Stoc Suficient ⚫</strong></p><p style="color: red;"><strong>* 1-10 tone: Stoc Redus 🔴</strong></p><p style="color: red;"><strong>* <1 tonă: Nu se afișează în acest tabel ❌</strong></p></div>`; const dataCurenta = new Date().toLocaleDateString('ro-RO'); const htmlContent = `<html><head><style>body { font-family: Calibri, sans-serif; } table { width: 100%; border-collapse: collapse; page-break-inside: auto; } tr { page-break-inside: avoid; page-break-after: auto; } thead { display: table-header-group; } th, td { border: 1px solid #cccccc; padding: 8px; text-align: left; } th { background-color: #C6E0B4; font-size: 14px; font-weight: bold; } h1 { font-size: 20px; text-align: center; margin-bottom: 20px; } .legenda { margin-top: 30px; border-top: 1px solid #ccc; padding-top: 15px; page-break-inside: avoid; } .legenda p { margin: 2px 0; }</style></head><body><h1>Stoc Materie Prima - Uz Extern [${dataCurenta}]</h1><table><thead><tr><th>Tip Material</th><th>Cod Culoare / Descriere</th><th>Status</th></tr></thead><tbody>${htmlRows}</tbody></table>${legendaHtml}</body></html>`; const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] }); const page = await browser.newPage(); await page.setContent(htmlContent, { waitUntil: 'networkidle0' }); const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, landscape: true, margin: { top: '25px', right: '25px', bottom: '25px', left: '25px' } }); await browser.close(); return pdfBuffer; }
