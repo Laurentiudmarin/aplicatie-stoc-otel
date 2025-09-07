@@ -263,9 +263,11 @@ app.post('/download-pdf', handleUploads, async (req, res) => {
 
 app.listen(PORT, () => { console.log(`Serverul FINAL a pornit la http://localhost:${PORT}`); });
 
-// --- FUNCȚIILE DE GENERARE A RAPOARTELOR ---
+// --- FUNCȚIA DE GENERARE A RAPORTULUI EXCEL (MODIFICATĂ) ---
 async function generateExcelReport(rezultateStoc) {
     const workbook = new ExcelJS.Workbook();
+    
+    // Pas 1: Pregătirea datelor o singură dată (cu formatare ZN)
     const dateTabel = Object.keys(rezultateStoc)
         .map(cheie => {
             const [tipMaterial, codCuloare] = cheie.split('|');
@@ -284,9 +286,10 @@ async function generateExcelReport(rezultateStoc) {
         .filter(row => row.cantitate >= 1)
         .sort((a, b) => a.tip.localeCompare(b.tip));
     
+    // Stiluri comune
     const legendValue = { richText: [{ font: { bold: true, color: { argb: 'FF000000' } }, text: '* ≥10 tone: Stoc Suficient ⚫\n' }, { font: { bold: true, color: { argb: 'FFFF0000' } }, text: '* 1-10 tone: Stoc Redus 🔴\n' }, { font: { bold: true, color: { argb: 'FFFF0000' } }, text: '* <1 tonă: Nu se afișează în acest tabel ❌' }] };
-    const defaultFont = { name: 'Calibri', size: 11 };
-    const redFont11 = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFF0000' } };
+    const defaultFont11 = { name: 'Calibri', size: 11 };
+    const redBoldFont11 = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFF0000' } };
     const greenFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6E0B4' } };
     const headerFont14 = { name: 'Calibri', size: 14, bold: true };
     const centerAlignment = { vertical: 'middle', horizontal: 'center' };
@@ -303,8 +306,8 @@ async function generateExcelReport(rezultateStoc) {
     worksheet1.eachRow((row, rowNumber) => {
         if (rowNumber > 1) {
             const statusVal = row.getCell('status').value;
-            row.eachCell(cell => {
-                cell.font = statusVal === 'Stoc Redus' ? redFont11 : defaultFont;
+            row.eachCell({ includeEmpty: true }, cell => { // includeEmpty pentru a formata și celule goale dacă există
+                cell.font = statusVal === 'Stoc Redus' ? redBoldFont11 : defaultFont11;
                 cell.border = borderStyle;
             });
         }
@@ -325,8 +328,8 @@ async function generateExcelReport(rezultateStoc) {
     worksheet2.eachRow((row, rowNumber) => {
         if (rowNumber > 1) {
             const statusVal = row.getCell('status').value;
-            row.eachCell(cell => {
-                cell.font = statusVal === 'Stoc Redus' ? redFont11 : defaultFont;
+            row.eachCell({ includeEmpty: true }, cell => {
+                cell.font = statusVal === 'Stoc Redus' ? redBoldFont11 : defaultFont11;
                 cell.border = borderStyle;
             });
         }
@@ -340,16 +343,23 @@ async function generateExcelReport(rezultateStoc) {
     const worksheet3 = workbook.addWorksheet('Stoc - UZ Extern- simplificat');
     const headerSimplificat = ['SUPREM', 'NEOMAT', 'MAT 0.50', 'MAT 0.45', 'MAT 0.40', 'LUCIOS 0.50', 'LUCIOS 0.45', 'LUCIOS 0.40', 'LUCIOS 0.35', 'LUCIOS 0.30', 'ZN', '> 0.50', 'IMITATIE LEMN'];
     const dataToHeaderMap = { 'MAT 0.5': 'MAT 0.50', 'MAT 0.4': 'MAT 0.40', '> 0.5': '> 0.50', 'LUCIOS 0.5': 'LUCIOS 0.50', 'LUCIOS 0.4': 'LUCIOS 0.40', 'LUCIOS 0.3': 'LUCIOS 0.30' };
+    const groupMappings = { 'Imitatie Lemn SP': 'IMITATIE LEMN', 'Imitatie Lemn DP': 'IMITATIE LEMN' };
+    const woodMapping = {
+        'WOOD DARK WAL SP': 'LEMN NUC INCHIS Simplu Prevopsit',
+        'WOOD GOLDEN OAK SP': 'LEMN STEJAR AURIU Simplu Prevopsit',
+        'WOOD GOLDEN OAK DP': 'LEMN STEJAR AURIU Dublu Prevopsit'
+    };
+
     worksheet3.columns = headerSimplificat.map(h => ({ header: h, key: h, width: 21.22 }));
     worksheet3.autoFilter = { from: 'A1', to: { row: 1, column: headerSimplificat.length } };
+    
     const headerRow3 = worksheet3.getRow(1);
     headerRow3.font = { name: 'Calibri', size: 18, bold: true };
     headerRow3.eachCell(cell => { cell.fill = greenFill; cell.alignment = centerAlignment; cell.border = borderStyle; });
-    headerRow3.height = 30;
 
     const groupedData = {};
     headerSimplificat.forEach(h => groupedData[h] = []);
-    const groupMappings = { 'Imitatie Lemn SP': 'IMITATIE LEMN', 'Imitatie Lemn DP': 'IMITATIE LEMN' };
+    
     dateTabel.forEach(row => {
         const originalTip = row.tip.trim();
         const group = groupMappings[originalTip] || dataToHeaderMap[originalTip] || originalTip;
@@ -370,18 +380,30 @@ async function generateExcelReport(rezultateStoc) {
         const rowData = {};
         for (const header of headerSimplificat) {
             const item = groupedData[header]?.[i];
-            if (item) { rowData[header] = item.cod; }
+            if (item) {
+                if (header === 'IMITATIE LEMN' && woodMapping[item.cod]) {
+                    rowData[header] = woodMapping[item.cod];
+                } else {
+                    rowData[header] = item.cod;
+                }
+            } else {
+                rowData[header] = ''; // Adaugă celulă goală pentru a crea grila completă
+            }
         }
         const addedRow = worksheet3.addRow(rowData);
+        
         addedRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
             const headerName = worksheet3.getColumn(colNumber).header;
             const item = groupedData[headerName]?.[i];
+            
             cell.alignment = centerAlignment;
             cell.border = borderStyle;
+
             if (item) {
                 cell.font = item.status === 'Stoc Redus' ? redFont18 : blackFont18;
             } else {
-                cell.font = { name: 'Calibri', size: 18, bold: true };
+                cell.font = blackFont18; // Aplicăm stilul de bază și celulelor goale
+                cell.value = ''; // Asigură-te că sunt goale, nu null
             }
         });
     }
