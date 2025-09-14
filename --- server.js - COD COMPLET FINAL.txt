@@ -263,10 +263,11 @@ app.post('/download-pdf', handleUploads, async (req, res) => {
 
 app.listen(PORT, () => { console.log(`Serverul FINAL a pornit la http://localhost:${PORT}`); });
 
-// --- FUNCȚIA DE GENERARE A RAPORTULUI EXCEL (MODIFICATĂ) ---
+// --- FUNCȚIILE DE GENERARE A RAPOARTELOR ---
 async function generateExcelReport(rezultateStoc) {
     const workbook = new ExcelJS.Workbook();
     
+    // Pas 1: Pregătirea datelor (cu formatare ZN)
     const dateTabel = Object.keys(rezultateStoc)
         .map(cheie => {
             const [tipMaterial, codCuloare] = cheie.split('|');
@@ -285,6 +286,7 @@ async function generateExcelReport(rezultateStoc) {
         .filter(row => row.cantitate >= 1)
         .sort((a, b) => a.tip.localeCompare(b.tip));
     
+    // Stiluri comune
     const legendValue = { richText: [{ font: { bold: true, color: { argb: 'FF000000' } }, text: '* ≥10 tone: Stoc Suficient ⚫\n' }, { font: { bold: true, color: { argb: 'FFFF0000' } }, text: '* 1-10 tone: Stoc Redus 🔴\n' }, { font: { bold: true, color: { argb: 'FFFF0000' } }, text: '* <1 tonă: Nu se afișează în acest tabel ❌' }] };
     const defaultFont11 = { name: 'Calibri', size: 11 };
     const redBoldFont11 = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFF0000' } };
@@ -293,7 +295,7 @@ async function generateExcelReport(rezultateStoc) {
     const centerAlignment = { vertical: 'middle', horizontal: 'center' };
     const borderStyle = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
 
-    // Sheet 1 & 2 (rămân neschimbate)
+    // --- Sheet 1: Stoc Detaliat ---
     const worksheet1 = workbook.addWorksheet('Stoc Detaliat');
     worksheet1.columns = [{ header: 'Tip Material', key: 'tip', width: 30 }, { header: 'Cod Culoare / Descriere', key: 'cod', width: 35 }, { header: 'Cantitate Totală (tone)', key: 'cantitate', width: 25 }, { header: 'Status', key: 'status', width: 20 }];
     worksheet1.addRows(dateTabel);
@@ -301,11 +303,21 @@ async function generateExcelReport(rezultateStoc) {
     const headerRow1 = worksheet1.getRow(1);
     headerRow1.font = headerFont14;
     headerRow1.eachCell((cell) => { cell.fill = greenFill; cell.alignment = centerAlignment; cell.border = borderStyle; });
-    worksheet1.eachRow((row, rowNumber) => { if (rowNumber > 1) { const statusVal = row.getCell('status').value; row.eachCell({ includeEmpty: true }, cell => { cell.font = statusVal === 'Stoc Redus' ? redBoldFont11 : defaultFont11; cell.border = borderStyle; }); } });
-    const legendRowIndex1 = (worksheet1.lastRow ? worksheet1.lastRow.number : 1) + 2;
+    worksheet1.eachRow((row, rowNumber) => {
+        if (rowNumber > 1) {
+            const statusVal = row.getCell('status').value;
+            row.eachCell({ includeEmpty: true }, cell => {
+                cell.font = statusVal === 'Stoc Redus' ? redBoldFont11 : defaultFont11;
+                cell.border = borderStyle;
+            });
+        }
+    });
+    const legendRowIndex1 = worksheet1.lastRow.number + 2;
     worksheet1.mergeCells(`A${legendRowIndex1}:D${legendRowIndex1}`);
     const legendCell1 = worksheet1.getCell(`A${legendRowIndex1}`);
     legendCell1.value = legendValue; legendCell1.alignment = { wrapText: true, vertical: 'top' }; worksheet1.getRow(legendRowIndex1).height = 55;
+
+    // --- Sheet 2: Stoc Materie Prima - Uz Extern ---
     const worksheet2 = workbook.addWorksheet('Stoc Materie Prima - Uz Extern');
     worksheet2.columns = [{ header: 'Tip Material', key: 'tip', width: 30 }, { header: 'Cod Culoare / Descriere', key: 'cod', width: 35 }, { header: 'Status', key: 'status', width: 20 }];
     worksheet2.addRows(dateTabel);
@@ -313,8 +325,16 @@ async function generateExcelReport(rezultateStoc) {
     const headerRow2 = worksheet2.getRow(1);
     headerRow2.font = headerFont14;
     headerRow2.eachCell((cell) => { cell.fill = greenFill; cell.alignment = centerAlignment; cell.border = borderStyle; });
-    worksheet2.eachRow((row, rowNumber) => { if (rowNumber > 1) { const statusVal = row.getCell('status').value; row.eachCell({ includeEmpty: true }, cell => { cell.font = statusVal === 'Stoc Redus' ? redBoldFont11 : defaultFont11; cell.border = borderStyle; }); } });
-    const legendRowIndex2 = (worksheet2.lastRow ? worksheet2.lastRow.number : 1) + 2;
+    worksheet2.eachRow((row, rowNumber) => {
+        if (rowNumber > 1) {
+            const statusVal = row.getCell('status').value;
+            row.eachCell({ includeEmpty: true }, cell => {
+                cell.font = statusVal === 'Stoc Redus' ? redBoldFont11 : defaultFont11;
+                cell.border = borderStyle;
+            });
+        }
+    });
+    const legendRowIndex2 = worksheet2.lastRow.number + 2;
     worksheet2.mergeCells(`A${legendRowIndex2}:C${legendRowIndex2}`);
     const legendCell2 = worksheet2.getCell(`A${legendRowIndex2}`);
     legendCell2.value = legendValue; legendCell2.alignment = { wrapText: true, vertical: 'top' }; worksheet2.getRow(legendRowIndex2).height = 55;
@@ -329,22 +349,27 @@ async function generateExcelReport(rezultateStoc) {
         'WOOD GOLDEN OAK SP': 'LEMN STEJAR AURIU Simplu Prevopsit',
         'WOOD GOLDEN OAK DP': 'LEMN STEJAR AURIU Dublu Prevopsit'
     };
+
     worksheet3.columns = headerSimplificat.map(h => ({ header: h, key: h, width: 21.22 }));
     worksheet3.autoFilter = { from: 'A1', to: { row: 1, column: headerSimplificat.length } };
+    
     const headerRow3 = worksheet3.getRow(1);
     headerRow3.font = { name: 'Calibri', size: 18, bold: true };
     headerRow3.eachCell(cell => { cell.fill = greenFill; cell.alignment = centerAlignment; cell.border = borderStyle; });
+    headerRow3.height = 30;
 
     const groupedData = {};
     headerSimplificat.forEach(h => groupedData[h] = []);
+    
     dateTabel.forEach(row => {
-        const originalTip = row.tip;
+        const originalTip = row.tip; // Deja curățat cu trim()
         const group = groupMappings[originalTip] || dataToHeaderMap[originalTip] || originalTip;
         if (groupedData[group]) {
             groupedData[group].push({ cod: row.cod, status: row.status });
         }
     });
 
+    // Sortăm listele de culori A-Z în interiorul fiecărui grup
     for (const key in groupedData) {
         groupedData[key].sort((a, b) => String(a.cod).localeCompare(String(b.cod)));
     }
@@ -353,6 +378,7 @@ async function generateExcelReport(rezultateStoc) {
     const redFont18 = { name: 'Calibri', size: 18, bold: true, color: { argb: 'FFFF0000' } };
     const blackFont18 = { name: 'Calibri', size: 18, bold: true, color: { argb: 'FF000000' } };
     
+    // Creăm rânduri "dense" pentru a avea borduri complete
     for (let i = 0; i < maxRows; i++) {
         const rowData = {};
         for (const header of headerSimplificat) {
@@ -363,22 +389,30 @@ async function generateExcelReport(rezultateStoc) {
                 } else {
                     rowData[header] = item.cod;
                 }
+            } else {
+                rowData[header] = ''; // Adaugă celulă goală pentru a crea grila completă
             }
         }
         const addedRow = worksheet3.addRow(rowData);
+        
+        // Aplicăm stilurile pe TOATE celulele din rând (inclusiv cele goale)
         addedRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
             const headerName = worksheet3.getColumn(colNumber).header;
             const item = groupedData[headerName]?.[i];
+            
             cell.alignment = centerAlignment;
             cell.border = borderStyle;
+
             if (item) {
                 cell.font = item.status === 'Stoc Redus' ? redFont18 : blackFont18;
             } else {
-                cell.font = blackFont18;
+                cell.font = blackFont18; // Aplicăm stilul de bază și celulelor goale
+                cell.value = ''; // Asigură-te că sunt goale, nu null
             }
         });
     }
 
+    // Adăugăm legenda la final
     const legendRowIndex3 = (worksheet3.lastRow ? worksheet3.lastRow.number : 1) + 2;
     worksheet3.mergeCells(legendRowIndex3, 1, legendRowIndex3, headerSimplificat.length);
     const legendCell3 = worksheet3.getCell(legendRowIndex3, 1);
