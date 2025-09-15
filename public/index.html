@@ -85,8 +85,7 @@
                             <tbody></tbody>
                         </table>
                         <div style="text-align:center; margin-top:20px;">
-                            <button id="download-btn" class="download-button" disabled>📥 Descarcă (Excel)</button>
-                            <button id="pdf-download-btn" class="download-button" disabled style="background: linear-gradient(45deg, #c0392b, #e74c3c);">📄 Descarcă (PDF)</button>
+                            <button id="download-btn" class="download-button" disabled>📥 Descarcă Raport (Excel)</button>
                         </div>
                     </div>
                 </div>
@@ -122,47 +121,20 @@
                 document.getElementById('stock-file').addEventListener('change', (e) => this.handleStockFile(e));
                 document.getElementById('process-btn').addEventListener('click', () => this.processFiles());
                 document.getElementById('download-btn').addEventListener('click', () => this.downloadReport());
-                document.getElementById('pdf-download-btn').addEventListener('click', () => this.downloadPdfReport()); // NOU
                 document.getElementById('form-regula').addEventListener('submit', (e) => this.salveazaRegula(e));
                 document.getElementById('form-cancel-btn').addEventListener('click', () => this.reseteazaFormular());
                 document.querySelectorAll('#app-view .results-table th.sortable').forEach(header => { header.addEventListener('click', () => this.handleSort(header)); });
             }
             displayResults(results) {
                 this.resultsArray = results; 
+                document.getElementById('pdf-download-btn')?.remove(); // Elimină butonul PDF dacă există
                 if (this.resultsArray.length === 0) { document.getElementById('results-section').style.display = 'none'; return; }
                 this.sortResults('tipMaterial', 'asc');
                 this.renderTableRows(); 
                 document.getElementById('results-section').style.display = 'block';
                 document.getElementById('download-btn').disabled = false;
-                document.getElementById('pdf-download-btn').disabled = false; // NOU
             }
-            downloadPdfReport() {
-                if (!this.stockFile) { alert('Nu există un fișier de stoc selectat.'); return; }
-                const selectedSuppliers = Array.from(document.querySelectorAll('.supplier-checkbox:checked')).map(cb => cb.value);
-                if (selectedSuppliers.length === 0) { alert('Trebuie să selectezi cel puțin un furnizor.'); return; }
-                this.showStatus('Se generează raportul PDF pe server...', 'info');
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.action = '/download-pdf';
-                form.enctype = 'multipart/form-data';
-                const stocInput = document.createElement('input');
-                stocInput.type = 'file';
-                stocInput.name = 'stoc';
-                const dataTransfer = new DataTransfer();
-                dataTransfer.items.add(this.stockFile);
-                stocInput.files = dataTransfer.files;
-                form.appendChild(stocInput);
-                const suppliersInput = document.createElement('input');
-                suppliersInput.type = 'hidden';
-                suppliersInput.name = 'suppliers';
-                suppliersInput.value = JSON.stringify(selectedSuppliers);
-                form.appendChild(suppliersInput);
-                document.body.appendChild(form);
-                form.submit();
-                document.body.removeChild(form);
-            }
-            
-            // ... (restul funcțiilor JS rămân neschimbate) ...
+            // ... (restul scriptului rămâne la fel) ...
             showView(viewName) { document.getElementById('app-view').style.display = 'none'; document.getElementById('admin-view').style.display = 'none'; document.getElementById('nav-app').classList.remove('active'); document.getElementById('nav-admin').classList.remove('active'); if (viewName === 'app') { document.getElementById('app-view').style.display = 'block'; document.getElementById('nav-app').classList.add('active'); } else if (viewName === 'admin') { document.getElementById('admin-view').style.display = 'block'; document.getElementById('nav-admin').classList.add('active'); this.incarcaReguli(); this.reseteazaFormular(); } }
             async handleStockFile(event) { this.stockFile = event.target.files[0]; if (!this.stockFile) return; document.getElementById('stock-status').textContent = `✅ ${this.stockFile.name}`; document.getElementById('stock-status').className = 'file-status file-loaded'; this.showStatus('Se extrag furnizorii din fișier...', 'info'); const formData = new FormData(); formData.append('stoc', this.stockFile); try { const response = await fetch('/api/get-suppliers', { method: 'POST', body: formData }); if (!response.ok) throw new Error(await response.text()); const suppliers = await response.json(); this.displaySuppliers(suppliers); this.showStatus('Selectează furnizorii de mai jos.', 'success'); } catch (error) { this.showStatus(`Eroare la extragerea furnizorilor: ${error.message}`, 'error'); } }
             displaySuppliers(suppliers) { const listDiv = document.getElementById('suppliers-list'); listDiv.innerHTML = ''; if (suppliers.length === 0) { listDiv.innerHTML = 'Niciun furnizor găsit în fișier.'; return; } listDiv.innerHTML += `<div style="margin-bottom: 10px; font-weight: bold;"><input type="checkbox" id="select-all-suppliers" checked><label for="select-all-suppliers">Selectează Tot</label></div>`; suppliers.forEach((supplier, index) => { listDiv.innerHTML += `<div><input type="checkbox" class="supplier-checkbox" id="supplier-${index}" value="${supplier}" checked><label for="supplier-${index}">${supplier}</label></div>`; }); document.getElementById('select-all-suppliers').addEventListener('change', (e) => { document.querySelectorAll('.supplier-checkbox').forEach(cb => cb.checked = e.target.checked); }); document.getElementById('suppliers-step').style.display = 'block'; document.getElementById('process-btn').disabled = false; }
