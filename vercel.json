@@ -13,7 +13,6 @@
   "routes": [
     { "src": "/api/(.*)", "dest": "server.js" },
     { "src": "/download", "dest": "server.js" },
-    { "src": "/download-pdf", "dest": "server.js" },
     { "src": "/process", "dest": "server.js" },
     { "src": "/(.*)", "dest": "/public/$1" }
   ]
