@@ -1,4 +1,4 @@
-// --- server.js - COD COMPLET FINAL (cu logica de potrivire corectată) ---
+// --- server.js - COD COMPLET FINAL (cu logica "Most Specific Match Wins") ---
 
 const express = require('express');
 const multer = require('multer');
@@ -31,55 +31,99 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 app.use(express.static('public'));
 
-// --- API PENTRU ADMINISTRAREA REGULILOR ---
+// --- API-uri (neschimbate) ---
 app.get('/api/reguli', async (req, res) => { try { const result = await pool.query('SELECT * FROM reguli ORDER BY tip_material ASC'); res.json(result.rows); } catch (err) { res.status(500).json({ error: err.message }); } });
 app.post('/api/reguli', async (req, res) => { try { const { furnizor, criterii, tip_material, descriere_raport } = req.body; const sql = 'INSERT INTO reguli (furnizor, criterii, tip_material, descriere_raport) VALUES ($1, $2, $3, $4) RETURNING id'; const result = await pool.query(sql, [furnizor, criterii, tip_material, descriere_raport]); res.json({ id: result.rows[0].id }); } catch (err) { res.status(400).json({ error: err.message }); } });
 app.delete('/api/reguli/:id', async (req, res) => { try { await pool.query('DELETE FROM reguli WHERE id = $1', [req.params.id]); res.json({ message: "Șters" }); } catch (err) { res.status(400).json({ error: err.message }); } });
 app.put('/api/reguli/:id', async (req, res) => { try { const { furnizor, criterii, tip_material, descriere_raport } = req.body; const sql = 'UPDATE reguli SET furnizor = $1, criterii = $2, tip_material = $3, descriere_raport = $4 WHERE id = $5'; await pool.query(sql, [furnizor, criterii, tip_material, descriere_raport, req.params.id]); res.json({ message: "Succes" }); } catch (err) { res.status(400).json({ error: err.message }); } });
-
-// --- RUTE PENTRU IMPORT / EXPORT REGULI ---
 app.post('/api/migrate', upload.single('sablon_import'), async (req, res) => { const sablonFile = req.file; if (!sablonFile) { return res.status(400).send('Niciun fișier selectat.'); } const client = await pool.connect(); try { const workbook = xlsx.read(sablonFile.buffer, { type: 'buffer' }); const sheetName = workbook.SheetNames[0]; const sheetData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]); await client.query('BEGIN'); await client.query('DELETE FROM reguli'); const sql = `INSERT INTO reguli (furnizor, tip_material, descriere_raport, criterii) VALUES ($1, $2, $3, $4)`; let count = 0; for (const row of sheetData) { const tipMaterial = row['Tip Material']; const descriereRaport = row['Cod Culoare / Descriere']; const criterii = row['Material Corespondent (Criterii)']; const furnizor = row['Furnizor'] || 'ORICE'; if (tipMaterial && descriereRaport && criterii) { await client.query(sql, [String(furnizor).trim(), String(tipMaterial).trim(), String(descriereRaport).trim(), String(criterii).trim()]); count++; } } await client.query('COMMIT'); res.send(`${count} de reguli au fost importate cu succes!`); } catch (error) { await client.query('ROLLBACK'); console.error('Importul a eșuat:', error); res.status(500).send(`Importul a eșuat: ${error.message}`); } finally { client.release(); } });
 app.get('/api/export-rules', async (req, res) => { try { const result = await pool.query('SELECT * FROM reguli ORDER BY tip_material ASC'); const reguli = result.rows; const workbook = new ExcelJS.Workbook(); const worksheet = workbook.addWorksheet('Reguli Stoc'); worksheet.columns = [{ header: 'Tip Material', key: 'tip_material', width: 30 }, { header: 'Cod Culoare / Descriere', key: 'descriere_raport', width: 35 }, { header: 'Material Corespondent (Criterii)', key: 'criterii', width: 50 }, { header: 'Furnizor', key: 'furnizor', width: 30 }]; worksheet.getRow(1).font = { bold: true }; worksheet.addRows(reguli); const buffer = await workbook.xlsx.writeBuffer(); const numeFisier = `reguli_backup_${new Date().toLocaleDateString('ro-RO').replace(/\./g, '-')}.xlsx`; res.setHeader('Content-Disposition', `attachment; filename="${numeFisier}"`); res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); res.send(buffer); } catch (error) { console.error("Eroare la exportul regulilor:", error); res.status(500).send("Eroare la exportul regulilor."); } });
-
-// --- API PENTRU A EXTRAGE FURNIZORII ---
 app.post('/api/get-suppliers', upload.single('stoc'), (req, res) => { const stocFile = req.file; try { const workbook = xlsx.read(stocFile.buffer, { type: 'buffer' }); let sheetName = workbook.SheetNames.find(name => name.includes('800')); if (!sheetName) { sheetName = workbook.SheetNames[0]; } if (!sheetName) { throw new Error("Fișierul Excel este gol sau corupt."); } const sheet = workbook.Sheets[sheetName]; const stocData = xlsx.utils.sheet_to_json(sheet); const suppliers = new Set(); for (const rand of stocData) { const supplierName = rand['Name 1'] || rand['Nume fz']; if (supplierName) { suppliers.add(supplierName.toString().trim()); } } res.json(Array.from(suppliers).sort()); } catch (error) { console.error('Eroare la extragerea furnizorilor:', error); res.status(500).send(error.message); } finally { } });
 
-// --- LOGICA PRINCIPALĂ A APLICAȚIEI ---
-async function runProcessing(stocFileBuffer, selectedSuppliers) { const client = await pool.connect(); try { const reguliResult = await client.query('SELECT * FROM reguli'); const reguli = reguliResult.rows; const workbook = xlsx.read(stocFileBuffer, { type: 'buffer' }); let sheetName = workbook.SheetNames.find(name => name.includes('800')); if (!sheetName) { console.log("Avertisment: Nu s-a găsit un sheet cu '800'..."); sheetName = workbook.SheetNames[0]; } if (!sheetName) { throw new Error("Fișierul Excel este gol sau corupt."); } const sheet = workbook.Sheets[sheetName]; const stocData = xlsx.utils.sheet_to_json(sheet); const filteredStocData = stocData.filter(rand => { const supplierName = rand['Name 1'] || rand['Nume fz']; return selectedSuppliers.includes(supplierName); }); const cantitatiFinale = {}; for (const rand of filteredStocData) { const descriere = rand['Material Description'] || ''; const furnizor = rand['Name 1'] || rand['Nume fz'] || ''; const cantitate = parseFloat(rand['Unrestricted'] || rand['Stoc (to)']) || 0; if (!descriere || cantitate <= 0) continue; const descriereCurataLower = descriere.toLowerCase().trim().replace(/-d$/, ''); let regulaPotrivita = null; for (const regula of reguli) { const furnizorMatch = (regula.furnizor.toUpperCase() === 'ORICE' || regula.furnizor.toLowerCase() === furnizor.toLowerCase());
+// --- LOGICA PRINCIPALĂ A APLICAȚIEI (MODIFICATĂ) ---
+async function runProcessing(stocFileBuffer, selectedSuppliers) {
+    const client = await pool.connect();
+    try {
+        const reguliResult = await client.query('SELECT * FROM reguli');
+        const reguli = reguliResult.rows;
+        const workbook = xlsx.read(stocFileBuffer, { type: 'buffer' });
+        let sheetName = workbook.SheetNames.find(name => name.includes('800'));
+        if (!sheetName) { console.log("Avertisment: Nu s-a găsit un sheet cu '800'..."); sheetName = workbook.SheetNames[0]; }
+        if (!sheetName) { throw new Error("Fișierul Excel este gol sau corupt."); }
+        const sheet = workbook.Sheets[sheetName];
+        const stocData = xlsx.utils.sheet_to_json(sheet);
+        const filteredStocData = stocData.filter(rand => { const supplierName = rand['Name 1'] || rand['Nume fz']; return selectedSuppliers.includes(supplierName); });
+        
+        const cantitatiFinale = {};
+        
+        for (const rand of filteredStocData) {
+            const descriere = rand['Material Description'] || '';
+            const furnizor = rand['Name 1'] || rand['Nume fz'] || '';
+            const cantitate = parseFloat(rand['Unrestricted'] || rand['Stoc (to)']) || 0;
+            
+            if (!descriere || cantitate <= 0) continue;
+            
+            const descriereCurataLower = descriere.toLowerCase().trim().replace(/-d$/, '');
+            
+            // --- AICI ESTE NOUA LOGICĂ ---
+            let bestMatch = null;
+
+            for (const regula of reguli) {
+                const furnizorMatch = (regula.furnizor.toUpperCase() === 'ORICE' || regula.furnizor.toLowerCase() === furnizor.toLowerCase());
                 
-                // --- AICI ESTE MODIFICAREA LOGICII ---
                 let criteriiMatch = false;
                 if (regula.criterii.includes(',')) {
-                    // Logica "ȘI" (cu virgule) - verificată PRIMA
+                    // Logica "ȘI"
                     const andKeywords = regula.criterii.split(',').map(c => c.trim().toLowerCase()).filter(c => c);
                     if (andKeywords.length > 0 && andKeywords.every(keyword => descriereCurataLower.includes(keyword))) {
                         criteriiMatch = true;
                     }
                 } else if (regula.criterii.includes('/')) {
-                    // Logica "SAU" (cu slash) - verificată a DOUA
+                    // Logica "SAU"
                     const orCodes = regula.criterii.split('/').map(c => c.trim().toLowerCase());
                     if (orCodes.some(code => descriereCurataLower === code)) {
                         criteriiMatch = true;
                     }
                 } else {
-                    // Logica simplă (un singur cuvânt cheie)
+                    // Logica simplă
                     const keyword = regula.criterii.trim().toLowerCase();
                     if (keyword && descriereCurataLower.includes(keyword)) {
                         criteriiMatch = true;
                     }
                 }
-                // --- SFÂRȘITUL MODIFICĂRII LOGICII ---
+                
+                // Dacă potrivim, verificăm dacă e o potrivire mai bună
+                if (furnizorMatch && criteriiMatch) {
+                    if (!bestMatch || regula.criterii.length > bestMatch.criterii.length) {
+                        bestMatch = regula; // Am găsit o regulă nouă, mai specifică!
+                    }
+                }
+            } // Sfârșitul buclei 'for (const regula...)'
+            
+            // Acum adăugăm cantitatea folosind DOAR cea mai bună potrivire
+            if (bestMatch) {
+                const cheieUnica = `${bestMatch.tip_material}|${bestMatch.descriere_raport}`;
+                cantitatiFinale[cheieUnica] = (cantitatiFinale[cheieUnica] || 0) + cantitate;
+            }
+            // --- SFÂRȘITUL NOII LOGICI ---
 
-                if (furnizorMatch && criteriiMatch) { regulaPotrivita = regula; break; } } if (regulaPotrivita) { const cheieUnica = `${regulaPotrivita.tip_material}|${regulaPotrivita.descriere_raport}`; cantitatiFinale[cheieUnica] = (cantitatiFinale[cheieUnica] || 0) + cantitate; } } return cantitatiFinale; } finally { client.release(); } }
+        } // Sfârșitul buclei 'for (const rand...)'
+        
+        return cantitatiFinale;
+        
+    } finally {
+        client.release();
+    }
+}
 
-// --- RUTELE PRINCIPALE ---
+// --- RUTELE PRINCIPALE (neschimbate) ---
 const handleUploads = upload.fields([ { name: 'stoc', maxCount: 1 } ]);
 app.post('/process', handleUploads, async (req, res) => { const stocFile = req.files.stoc[0]; try { const selectedSuppliers = JSON.parse(req.body.suppliers); const rezultateStoc = await runProcessing(stocFile.buffer, selectedSuppliers); const rezultateFormatate = Object.keys(rezultateStoc).map(cheie => { const [tipMaterial, descriereRaport] = cheie.split('|'); return { tipMaterial, descriereRaport, cantitate: rezultateStoc[cheie] }; }).filter(item => item.cantitate >= 1); res.json(rezultateFormatate); } catch (error) { console.error('Eroare la /process:', error); res.status(500).send(error.message); } });
 app.post('/download', handleUploads, async (req, res) => { const stocFile = req.files.stoc[0]; try { const selectedSuppliers = JSON.parse(req.body.suppliers); const rezultateStoc = await runProcessing(stocFile.buffer, selectedSuppliers); const excelBuffer = await generateExcelReport(rezultateStoc); const numeFisier = `Stoc_Materie_Prima_${new Date().toLocaleDateString('ro-RO').replace(/\./g, '-')}.xlsx`; res.setHeader('Content-Disposition', `attachment; filename="${numeFisier}"`); res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); res.send(excelBuffer); } catch (error) { console.error('Eroare la /download:', error); res.status(500).send(error.message); } });
 
 app.listen(PORT, () => { console.log(`Serverul FINAL a pornit la http://localhost:${PORT}`); });
 
-// --- FUNCȚIA DE GENERARE A RAPORTULUI EXCEL ---
+// --- FUNCȚIA DE GENERARE A RAPORTULUI EXCEL (neschimbată) ---
 async function generateExcelReport(rezultateStoc) {
     const workbook = new ExcelJS.Workbook();
     
