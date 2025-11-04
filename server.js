@@ -1,4 +1,4 @@
-// --- server.js - COD COMPLET FINAL (cu "MAT 0.50 Dubluprevopsit" adăugat) ---
+// --- server.js - COD COMPLET FINAL (cu logica de potrivire corectată) ---
 
 const express = require('express');
 const multer = require('multer');
@@ -45,7 +45,32 @@ app.get('/api/export-rules', async (req, res) => { try { const result = await po
 app.post('/api/get-suppliers', upload.single('stoc'), (req, res) => { const stocFile = req.file; try { const workbook = xlsx.read(stocFile.buffer, { type: 'buffer' }); let sheetName = workbook.SheetNames.find(name => name.includes('800')); if (!sheetName) { sheetName = workbook.SheetNames[0]; } if (!sheetName) { throw new Error("Fișierul Excel este gol sau corupt."); } const sheet = workbook.Sheets[sheetName]; const stocData = xlsx.utils.sheet_to_json(sheet); const suppliers = new Set(); for (const rand of stocData) { const supplierName = rand['Name 1'] || rand['Nume fz']; if (supplierName) { suppliers.add(supplierName.toString().trim()); } } res.json(Array.from(suppliers).sort()); } catch (error) { console.error('Eroare la extragerea furnizorilor:', error); res.status(500).send(error.message); } finally { } });
 
 // --- LOGICA PRINCIPALĂ A APLICAȚIEI ---
-async function runProcessing(stocFileBuffer, selectedSuppliers) { const client = await pool.connect(); try { const reguliResult = await client.query('SELECT * FROM reguli'); const reguli = reguliResult.rows; const workbook = xlsx.read(stocFileBuffer, { type: 'buffer' }); let sheetName = workbook.SheetNames.find(name => name.includes('800')); if (!sheetName) { console.log("Avertisment: Nu s-a găsit un sheet cu '800'..."); sheetName = workbook.SheetNames[0]; } if (!sheetName) { throw new Error("Fișierul Excel este gol sau corupt."); } const sheet = workbook.Sheets[sheetName]; const stocData = xlsx.utils.sheet_to_json(sheet); const filteredStocData = stocData.filter(rand => { const supplierName = rand['Name 1'] || rand['Nume fz']; return selectedSuppliers.includes(supplierName); }); const cantitatiFinale = {}; for (const rand of filteredStocData) { const descriere = rand['Material Description'] || ''; const furnizor = rand['Name 1'] || rand['Nume fz'] || ''; const cantitate = parseFloat(rand['Unrestricted'] || rand['Stoc (to)']) || 0; if (!descriere || cantitate <= 0) continue; const descriereCurataLower = descriere.toLowerCase().trim().replace(/-d$/, ''); let regulaPotrivita = null; for (const regula of reguli) { const furnizorMatch = (regula.furnizor.toUpperCase() === 'ORICE' || regula.furnizor.toLowerCase() === furnizor.toLowerCase()); let criteriiMatch = false; if (regula.criterii.includes('/')) { const orCodes = regula.criterii.split('/').map(c => c.trim().toLowerCase()); if (orCodes.some(code => descriereCurataLower === code)) { criteriiMatch = true; } } else { const andKeywords = regula.criterii.split(',').map(c => c.trim().toLowerCase()).filter(c => c); if (andKeywords.length > 0 && andKeywords.every(keyword => descriereCurataLower.includes(keyword))) { criteriiMatch = true; } } if (furnizorMatch && criteriiMatch) { regulaPotrivita = regula; break; } } if (regulaPotrivita) { const cheieUnica = `${regulaPotrivita.tip_material}|${regulaPotrivita.descriere_raport}`; cantitatiFinale[cheieUnica] = (cantitatiFinale[cheieUnica] || 0) + cantitate; } } return cantitatiFinale; } finally { client.release(); } }
+async function runProcessing(stocFileBuffer, selectedSuppliers) { const client = await pool.connect(); try { const reguliResult = await client.query('SELECT * FROM reguli'); const reguli = reguliResult.rows; const workbook = xlsx.read(stocFileBuffer, { type: 'buffer' }); let sheetName = workbook.SheetNames.find(name => name.includes('800')); if (!sheetName) { console.log("Avertisment: Nu s-a găsit un sheet cu '800'..."); sheetName = workbook.SheetNames[0]; } if (!sheetName) { throw new Error("Fișierul Excel este gol sau corupt."); } const sheet = workbook.Sheets[sheetName]; const stocData = xlsx.utils.sheet_to_json(sheet); const filteredStocData = stocData.filter(rand => { const supplierName = rand['Name 1'] || rand['Nume fz']; return selectedSuppliers.includes(supplierName); }); const cantitatiFinale = {}; for (const rand of filteredStocData) { const descriere = rand['Material Description'] || ''; const furnizor = rand['Name 1'] || rand['Nume fz'] || ''; const cantitate = parseFloat(rand['Unrestricted'] || rand['Stoc (to)']) || 0; if (!descriere || cantitate <= 0) continue; const descriereCurataLower = descriere.toLowerCase().trim().replace(/-d$/, ''); let regulaPotrivita = null; for (const regula of reguli) { const furnizorMatch = (regula.furnizor.toUpperCase() === 'ORICE' || regula.furnizor.toLowerCase() === furnizor.toLowerCase());
+                
+                // --- AICI ESTE MODIFICAREA LOGICII ---
+                let criteriiMatch = false;
+                if (regula.criterii.includes(',')) {
+                    // Logica "ȘI" (cu virgule) - verificată PRIMA
+                    const andKeywords = regula.criterii.split(',').map(c => c.trim().toLowerCase()).filter(c => c);
+                    if (andKeywords.length > 0 && andKeywords.every(keyword => descriereCurataLower.includes(keyword))) {
+                        criteriiMatch = true;
+                    }
+                } else if (regula.criterii.includes('/')) {
+                    // Logica "SAU" (cu slash) - verificată a DOUA
+                    const orCodes = regula.criterii.split('/').map(c => c.trim().toLowerCase());
+                    if (orCodes.some(code => descriereCurataLower === code)) {
+                        criteriiMatch = true;
+                    }
+                } else {
+                    // Logica simplă (un singur cuvânt cheie)
+                    const keyword = regula.criterii.trim().toLowerCase();
+                    if (keyword && descriereCurataLower.includes(keyword)) {
+                        criteriiMatch = true;
+                    }
+                }
+                // --- SFÂRȘITUL MODIFICĂRII LOGICII ---
+
+                if (furnizorMatch && criteriiMatch) { regulaPotrivita = regula; break; } } if (regulaPotrivita) { const cheieUnica = `${regulaPotrivita.tip_material}|${regulaPotrivita.descriere_raport}`; cantitatiFinale[cheieUnica] = (cantitatiFinale[cheieUnica] || 0) + cantitate; } } return cantitatiFinale; } finally { client.release(); } }
 
 // --- RUTELE PRINCIPALE ---
 const handleUploads = upload.fields([ { name: 'stoc', maxCount: 1 } ]);
@@ -84,8 +109,7 @@ async function generateExcelReport(rezultateStoc) {
     const centerAlignment = { vertical: 'middle', horizontal: 'center' };
     const borderStyle = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
 
-    // Sheet 1 (Stoc Detaliat) - Neschimbat
-    // Această secțiune preia datele din `dateTabel`, așa că va include automat noua categorie.
+    // Sheet 1 (Stoc Detaliat)
     const worksheet1 = workbook.addWorksheet('Stoc Detaliat');
     worksheet1.columns = [{ header: 'Tip Material', key: 'tip', width: 30 }, { header: 'Cod Culoare / Descriere', key: 'cod', width: 35 }, { header: 'Cantitate Totală (tone)', key: 'cantitate', width: 25 }, { header: 'Status', key: 'status', width: 20 }];
     worksheet1.addRows(dateTabel);
@@ -99,8 +123,7 @@ async function generateExcelReport(rezultateStoc) {
     const legendCell1 = worksheet1.getCell(`A${legendRowIndex1}`);
     legendCell1.value = legendValue; legendCell1.alignment = { wrapText: true, vertical: 'top' }; worksheet1.getRow(legendRowIndex1).height = 55;
 
-    // Sheet 2 (Stoc Materie Prima - Uz Extern) - Neschimbat
-    // Și această secțiune preia datele din `dateTabel`, deci va include automat noua categorie.
+    // Sheet 2 (Stoc Materie Prima - Uz Extern)
     const worksheet2 = workbook.addWorksheet('Stoc Materie Prima - Uz Extern');
     worksheet2.columns = [{ header: 'Tip Material', key: 'tip', width: 30 }, { header: 'Cod Culoare / Descriere', key: 'cod', width: 35 }, { header: 'Status', key: 'status', width: 20 }];
     worksheet2.addRows(dateTabel);
@@ -114,11 +137,9 @@ async function generateExcelReport(rezultateStoc) {
     const legendCell2 = worksheet2.getCell(`A${legendRowIndex2}`);
     legendCell2.value = legendValue; legendCell2.alignment = { wrapText: true, vertical: 'top' }; worksheet2.getRow(legendRowIndex2).height = 55;
 
-    // --- Sheet 3: Stoc - UZ Extern- simplificat (MODIFICAT) ---
-    // Aici este modificarea. Am redenumit și am mutat coloana.
+    // --- Sheet 3: Stoc - UZ Extern- simplificat (Neschimbat) ---
     const headerSimplificat = ['SUPREM', 'NEOMAT', 'MAT 0.50', 'MAT 0.45', 'MAT 0.40', 'LUCIOS 0.50', 'LUCIOS 0.45', 'LUCIOS 0.40', 'LUCIOS 0.35', 'LUCIOS 0.30', 'ZN', '> 0.50', 'MAT 0.50 Dubluprevopsit', 'IMITATIE LEMN'];
     
-    // Restul logicii pentru Sheet 3 rămâne neschimbată
     const dataToHeaderMap = { 'MAT 0.5': 'MAT 0.50', 'MAT 0.4': 'MAT 0.40', '> 0.5': '> 0.50', 'LUCIOS 0.5': 'LUCIOS 0.50', 'LUCIOS 0.4': 'LUCIOS 0.40', 'LUCIOS 0.3': 'LUCIOS 0.30' };
     const groupMappings = { 'Imitatie Lemn SP': 'IMITATIE LEMN', 'Imitatie Lemn DP': 'IMITATIE LEMN' };
     const woodMapping = { 'WOOD DARK WAL SP': 'LEMN NUC INCHIS Simplu Prevopsit', 'WOOD GOLDEN OAK SP': 'LEMN STEJAR AURIU Simplu Prevopsit', 'WOOD GOLDEN OAK DP': 'LEMN STEJAR AURIU Dublu Prevopsit' };
