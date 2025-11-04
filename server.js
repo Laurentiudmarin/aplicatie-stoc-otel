@@ -1,4 +1,4 @@
-// --- server.js - COD COMPLET FINAL (cu "MAT Dubluprevopsit" adăugat) ---
+// --- server.js - COD COMPLET FINAL (cu "MAT 0.50 Dubluprevopsit" adăugat) ---
 
 const express = require('express');
 const multer = require('multer');
@@ -85,6 +85,7 @@ async function generateExcelReport(rezultateStoc) {
     const borderStyle = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
 
     // Sheet 1 (Stoc Detaliat) - Neschimbat
+    // Această secțiune preia datele din `dateTabel`, așa că va include automat noua categorie.
     const worksheet1 = workbook.addWorksheet('Stoc Detaliat');
     worksheet1.columns = [{ header: 'Tip Material', key: 'tip', width: 30 }, { header: 'Cod Culoare / Descriere', key: 'cod', width: 35 }, { header: 'Cantitate Totală (tone)', key: 'cantitate', width: 25 }, { header: 'Status', key: 'status', width: 20 }];
     worksheet1.addRows(dateTabel);
@@ -99,6 +100,7 @@ async function generateExcelReport(rezultateStoc) {
     legendCell1.value = legendValue; legendCell1.alignment = { wrapText: true, vertical: 'top' }; worksheet1.getRow(legendRowIndex1).height = 55;
 
     // Sheet 2 (Stoc Materie Prima - Uz Extern) - Neschimbat
+    // Și această secțiune preia datele din `dateTabel`, deci va include automat noua categorie.
     const worksheet2 = workbook.addWorksheet('Stoc Materie Prima - Uz Extern');
     worksheet2.columns = [{ header: 'Tip Material', key: 'tip', width: 30 }, { header: 'Cod Culoare / Descriere', key: 'cod', width: 35 }, { header: 'Status', key: 'status', width: 20 }];
     worksheet2.addRows(dateTabel);
@@ -113,8 +115,8 @@ async function generateExcelReport(rezultateStoc) {
     legendCell2.value = legendValue; legendCell2.alignment = { wrapText: true, vertical: 'top' }; worksheet2.getRow(legendRowIndex2).height = 55;
 
     // --- Sheet 3: Stoc - UZ Extern- simplificat (MODIFICAT) ---
-    // Aici este modificarea. Am adăugat 'MAT Dubluprevopsit' în listă.
-    const headerSimplificat = ['SUPREM', 'NEOMAT', 'MAT 0.50', 'MAT 0.45', 'MAT 0.40', 'LUCIOS 0.50', 'LUCIOS 0.45', 'LUCIOS 0.40', 'LUCIOS 0.35', 'LUCIOS 0.30', 'ZN', '> 0.50', 'MAT Dubluprevopsit', 'IMITATIE LEMN'];
+    // Aici este modificarea. Am redenumit și am mutat coloana.
+    const headerSimplificat = ['SUPREM', 'NEOMAT', 'MAT 0.50', 'MAT 0.45', 'MAT 0.40', 'LUCIOS 0.50', 'LUCIOS 0.45', 'LUCIOS 0.40', 'LUCIOS 0.35', 'LUCIOS 0.30', 'ZN', '> 0.50', 'MAT 0.50 Dubluprevopsit', 'IMITATIE LEMN'];
     
     // Restul logicii pentru Sheet 3 rămâne neschimbată
     const dataToHeaderMap = { 'MAT 0.5': 'MAT 0.50', 'MAT 0.4': 'MAT 0.40', '> 0.5': '> 0.50', 'LUCIOS 0.5': 'LUCIOS 0.50', 'LUCIOS 0.4': 'LUCIOS 0.40', 'LUCIOS 0.3': 'LUCIOS 0.30' };
